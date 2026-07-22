@@ -1,0 +1,58 @@
+# Build output
+build/
+out/
+[Dd]ebug/
+[Rr]elease/
+[Dd]ebugPublic/
+[Rr]eleasePublic/
+
+# IDE / Editor
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.user
+*.qbs
+*.pro.user*
+*.suo
+
+# Qt Creator
+*.autosave
+CMakeLists.txt.user
+*.qmlproject.user
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+
+# Compiled artifacts
+*.obj
+*.o
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.pdb
+*.ilk
+*.exp
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Packages
+*.7z
+*.zip
+*.tar.gz
+*.rar
