@@ -1,12 +1,12 @@
-# Build output
+# ── Build output ──────────────────────────────────
 build/
+build_debug/
+build_release/
 out/
 [Dd]ebug/
 [Rr]elease/
-[Dd]ebugPublic/
-[Rr]eleasePublic/
 
-# IDE / Editor
+# ── IDE / Editor ─────────────────────────────────
 .vs/
 .vscode/
 .idea/
@@ -18,19 +18,19 @@ out/
 *.pro.user*
 *.suo
 
-# Qt Creator
+# ── Qt Creator ──────────────────────────────────
 *.autosave
 CMakeLists.txt.user
 *.qmlproject.user
 
-# CMake generated
+# ── CMake generated ──────────────────────────────
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 *.cmake
 !CMakeLists.txt
 
-# Compiled artifacts
+# ── Compiled artifacts ───────────────────────────
 *.obj
 *.o
 *.exe
@@ -46,12 +46,12 @@ moc_*.cpp
 ui_*.h
 qrc_*.cpp
 
-# OS files
+# ── OS files ─────────────────────────────────────
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Packages
+# ── Packages ─────────────────────────────────────
 *.7z
 *.zip
 *.tar.gz

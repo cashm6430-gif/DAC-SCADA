@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "description": "Debug Qt 6.8.4 @ E:/Qt/debug/bin",
+      "binaryDir": "${sourceDir}/build_debug",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "E:/Qt/debug/bin"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "description": "Release Qt 6.8.4 @ E:/Qt/release/bin",
+      "binaryDir": "${sourceDir}/build_release",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "E:/Qt/release/bin"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release"
+    }
+  ]
+}

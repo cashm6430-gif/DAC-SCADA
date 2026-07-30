@@ -15,7 +15,7 @@ struct DataKey {
     }
 };
 
-inline uint qHash(const DataKey &k, uint seed = 0) {
+inline size_t qHash(const DataKey &k, size_t seed = 0) {
     return qHash(k.deviceAddr, seed) ^ qHash(k.registerAddr, seed);
 }
 
