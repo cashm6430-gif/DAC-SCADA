@@ -4,14 +4,7 @@
 #include <QObject>
 #include <QVector>
 #include <QDateTime>
-
-struct AlarmRecord {
-    QDateTime timestamp;
-    int        deviceAddr = 0;
-    QString    message;
-    enum Severity { Info, Warning, Critical } severity = Info;
-    bool       acknowledged = false;
-};
+#include "types.h"
 
 /// Collects, persists and signals alarm events.
 class AlarmEngine : public QObject

@@ -5,16 +5,9 @@
 #include <QVector>
 #include <QTimer>
 #include <QModbusDataUnit>
+#include "types.h"
 
 class ModbusRtu;
-
-/// Describes a single field device on the bus.
-struct DeviceInfo {
-    int     address = 0;
-    QString name;
-    QString type;       // e.g. "temperature_sensor", "pump_controller"
-    bool    online = false;
-};
 
 /// Polls Modbus devices and emits parsed data / alarms.
 class DeviceManager : public QObject

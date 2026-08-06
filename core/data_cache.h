@@ -4,16 +4,7 @@
 #include <QObject>
 #include <QHash>
 #include <QAbstractTableModel>
-
-/// Key uniquely identifying a data point: (device, register).
-struct DataKey {
-    int deviceAddr;
-    int registerAddr;
-
-    bool operator==(const DataKey &o) const {
-        return deviceAddr == o.deviceAddr && registerAddr == o.registerAddr;
-    }
-};
+#include "types.h"
 
 inline size_t qHash(const DataKey &k, size_t seed = 0) {
     return qHash(k.deviceAddr, seed) ^ qHash(k.registerAddr, seed);

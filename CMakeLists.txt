@@ -51,12 +51,17 @@ set(SOURCES
     communication/modbus_rtu.cpp
     ui/mainwindow.h
     ui/mainwindow.cpp
+    ui/main_viewmodel.h
+    ui/main_viewmodel.cpp
     core/device_manager.h
     core/device_manager.cpp
     core/data_cache.h
     core/data_cache.cpp
     core/alarm_engine.h
     core/alarm_engine.cpp
+    core/channel_manager.h
+    core/channel_manager.cpp
+    core/types.h
 )
 
 # ── Executable ────────────────────────────────────

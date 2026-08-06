@@ -1,0 +1,242 @@
+@startuml
+title DAC-SCADA — Class Diagram
+
+skinparam classAttributeIconSize 0
+
+' ============================================================
+' ABSTRACT INTERFACE
+' ============================================================
+
+abstract class CommInterface {
+    + {abstract} open() : bool
+    + {abstract} close() : void
+    + {abstract} isOpen() : bool
+    + {abstract} write(data : QByteArray) : qint64
+    + {abstract} name() : QString
+    ..
+    signals
+    __dataReceived__(data : QByteArray)
+    __errorOccurred__(msg : QString)
+    __stateChanged__(connected : bool)
+}
+
+' ============================================================
+' COMMUNICATION LAYER
+' ============================================================
+
+class SerialPortComm {
+    - m_serial : QSerialPort*
+    - m_portName : QString
+    - m_baudRate : int = 9600
+    - m_dataBits : QSerialPort::DataBits
+    - m_parity : QSerialPort::Parity
+    - m_stopBits : QSerialPort::StopBits
+    ..
+    + setPortName(name : QString) : void
+    + setBaudRate(rate : int) : void
+    + portName() : QString
+    + open() : bool
+    + close() : void
+    + isOpen() : bool
+    + write(data : QByteArray) : qint64
+    + name() : QString
+    ..
+    slots
+    - onReadyRead() : void
+    - onErrorOccurred(error) : void
+}
+
+class ModbusRtu {
+    - m_client : QModbusRtuSerialClient*
+    - m_serial : SerialPortComm*
+    ..
+    + open() : bool
+    + close() : void
+    + isOpen() : bool
+    + write(data : QByteArray) : qint64
+    + name() : QString
+    + readHoldingRegisters(deviceAddr, startAddr, count) : void
+    + readInputRegisters(deviceAddr, startAddr, count) : void
+    + readCoils(deviceAddr, startAddr, count) : void
+    + writeSingleRegister(deviceAddr, regAddr, value) : void
+    + writeMultipleRegisters(deviceAddr, startAddr, values) : void
+    ..
+    signals
+    __registersRead__(deviceAddr : int, unit : QModbusDataUnit)
+    __registerWritten__(deviceAddr : int, regAddr : int)
+    __modbusError__(deviceAddr : int, msg : QString)
+    ..
+    slots
+    - onReadReady() : void
+    - onWriteReady() : void
+}
+
+' ============================================================
+' CORE LAYER
+' ============================================================
+
+class DeviceManager {
+    - m_modbus : ModbusRtu*
+    - m_devices : QVector~DeviceInfo~
+    - m_pollTimer : QTimer
+    - m_activeIndex : int = -1
+    ..
+    + scan() : void
+    + setActiveDevice(index : int) : void
+    + startPolling(intervalMs : int = 1000) : void
+    + stopPolling() : void
+    + devices() : QVector~DeviceInfo~
+    ..
+    signals
+    __deviceDiscovered__(info : DeviceInfo)
+    __deviceDataChanged__(deviceAddr, registerAddr : int, value : double)
+    __alarmTriggered__(deviceAddr : int, msg : QString)
+    ..
+    slots
+    - onPollTimeout() : void
+    - onRegistersRead(deviceAddr : int, unit : QModbusDataUnit) : void
+}
+
+class DataCache {
+    - m_values : QHash~DataKey, double~
+    - m_model : DataCacheModel*
+    ..
+    + tableModel() : DataCacheModel*
+    + updateValue(deviceAddr : int, registerAddr : int, value : double)
+    ..
+    signals
+    __valueChanged__(key : DataKey, value : double)
+}
+
+class DataCacheModel {
+    + rowCount(parent = QModelIndex{}) : int
+    + columnCount(parent = QModelIndex{}) : int
+    + data(index : QModelIndex, role : int) : QVariant
+    + headerData(section, orientation : int, role : int) : QVariant
+    + setData(rows) : void
+}
+
+class AlarmEngine {
+    - m_active : QVector~AlarmRecord~
+    - m_history : QVector~AlarmRecord~
+    ..
+    + activeAlarms() : QVector~AlarmRecord~
+    + history() : QVector~AlarmRecord~
+    + onAlarmTriggered(deviceAddr : int, msg : QString)
+    + acknowledgeAlarm(index : int) : void
+    ..
+    signals
+    __newAlarm__(record : AlarmRecord)
+    __alarmAcknowledged__(index : int)
+}
+
+' ============================================================
+' UI LAYER
+' ============================================================
+
+class MainWindow {
+    - m_serial : SerialPortComm*
+    - m_modbus : ModbusRtu*
+    - m_deviceMgr : DeviceManager*
+    - m_cache : DataCache*
+    - m_alarms : AlarmEngine*
+    ..
+    + setupUi() : void
+    + setupConnections() : void
+    + createStatusBar() : void
+    ..
+    slots
+    - onConnectClicked() : void
+    - onDisconnectClicked() : void
+    - onRefreshDevices() : void
+    - onDeviceSelected(index : int) : void
+    - updateConnectionState(connected : bool) : void
+}
+
+' ============================================================
+' DATA STRUCTURES
+' ============================================================
+
+class DeviceInfo <<struct>> {
+    + address : int
+    + name : QString
+    + type : QString
+    + online : bool
+}
+
+class DataKey <<struct>> {
+    + deviceAddr : int
+    + registerAddr : int
+    ..
+    + operator==(other : DataKey) : bool
+}
+
+class AlarmRecord <<struct>> {
+    + timestamp : QDateTime
+    + deviceAddr : int
+    + message : QString
+    + severity : Severity
+    + acknowledged : bool
+}
+
+enum Severity {
+    Info
+    Warning
+    Critical
+}
+
+' ============================================================
+' INHERITANCE
+' ============================================================
+
+QObject <|-- CommInterface
+CommInterface <|-- SerialPortComm
+CommInterface <|-- ModbusRtu
+
+QObject <|-- DeviceManager
+QObject <|-- DataCache
+QObject <|-- AlarmEngine
+QAbstractTableModel <|-- DataCacheModel
+QObject <|-- DataCacheModel
+
+QMainWindow <|-- MainWindow
+
+' ============================================================
+' COMPOSITION (MainWindow owns all subsystems)
+' ============================================================
+
+MainWindow *-- "1" SerialPortComm
+MainWindow *-- "1" ModbusRtu
+MainWindow *-- "1" DeviceManager
+MainWindow *-- "1" DataCache
+MainWindow *-- "1" AlarmEngine
+
+DataCache *-- "1" DataCacheModel
+
+' ============================================================
+' DEPENDENCY (holds pointer, does not own)
+' ============================================================
+
+ModbusRtu ..> SerialPortComm : <<uses>>
+DeviceManager ..> ModbusRtu : <<uses>>
+
+' ============================================================
+' ASSOCIATION (data types)
+' ============================================================
+
+DeviceManager ..> DeviceInfo
+DeviceManager ..> ModbusRtu
+DataCache ..> DataKey
+AlarmEngine ..> AlarmRecord
+AlarmRecord ..> Severity
+
+' ============================================================
+' SIGNAL-SLOT CONNECTIONS
+' ============================================================
+
+SerialPortComm --> MainWindow : stateChanged\n→ updateConnectionState
+ModbusRtu --> DeviceManager : registersRead\n→ onRegistersRead
+DeviceManager --> DataCache : deviceDataChanged\n→ updateValue
+DeviceManager --> AlarmEngine : alarmTriggered\n→ onAlarmTriggered
+
+@enduml

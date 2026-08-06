@@ -55,7 +55,7 @@ DataCacheModel *DataCache::tableModel() const { return m_model; }
 
 void DataCache::updateValue(int deviceAddr, int registerAddr, double value)
 {
-    DataKey key{deviceAddr, registerAddr};
+    DataKey key{static_cast<qint16>(deviceAddr), static_cast<qint16>(registerAddr)};
     m_values[key] = value;
     emit valueChanged(key, value);
 }

@@ -1,9 +1,5 @@
 #include "mainwindow.h"
-#include "core/device_manager.h"
-#include "core/data_cache.h"
-#include "core/alarm_engine.h"
-#include "communication/serialport_comm.h"
-#include "communication/modbus_rtu.h"
+#include "main_viewmodel.h"
 
 #include <QToolBar>
 #include <QStatusBar>
@@ -13,11 +9,9 @@
 #include <QTreeWidget>
 #include <QTableView>
 #include <QLabel>
-#include <QPushButton>
 #include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QComboBox>
 #include <QMessageBox>
+#include <QDateTime>
 
 // ---------------------------------------------------------------------------
 // construction / destruction
@@ -25,17 +19,12 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
+    , m_viewModel(new MainViewModel(this))
 {
-    // --- core objects ---
-    m_serial    = new SerialPortComm(this);
-    m_modbus    = new ModbusRtu(m_serial, this);
-    m_deviceMgr = new DeviceManager(m_modbus, this);
-    m_cache     = new DataCache(this);
-    m_alarms    = new AlarmEngine(this);
-
     setupUi();
-    setupConnections();
+    bindToViewModel();
     createStatusBar();
+
     setWindowTitle("DAC-SCADA");
     resize(1280, 720);
 }
@@ -43,27 +32,27 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow() = default;
 
 // ---------------------------------------------------------------------------
-// UI setup
+// UI setup — pure widget creation, no business logic
 // ---------------------------------------------------------------------------
 
 void MainWindow::setupUi()
 {
     // --- menu bar ---
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(tr("&Connect"),    this, &MainWindow::onConnectClicked);
-    fileMenu->addAction(tr("&Disconnect"), this, &MainWindow::onDisconnectClicked);
+    fileMenu->addAction(tr("&Connect"),    this, [this]() { m_viewModel->connectToDevice(); });
+    fileMenu->addAction(tr("&Disconnect"), this, [this]() { m_viewModel->disconnectFromDevice(); });
     fileMenu->addSeparator();
     fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
-    viewMenu->addAction(tr("&Refresh Devices"), this, &MainWindow::onRefreshDevices);
+    viewMenu->addAction(tr("&Refresh Devices"), this, [this]() { m_viewModel->scanDevices(); });
 
     // --- toolbar ---
     QToolBar *toolbar = addToolBar(tr("Main"));
-    toolbar->addAction(tr("Connect"),    this, &MainWindow::onConnectClicked);
-    toolbar->addAction(tr("Disconnect"), this, &MainWindow::onDisconnectClicked);
+    toolbar->addAction(tr("Connect"),    this, [this]() { m_viewModel->connectToDevice(); });
+    toolbar->addAction(tr("Disconnect"), this, [this]() { m_viewModel->disconnectFromDevice(); });
     toolbar->addSeparator();
-    toolbar->addAction(tr("Refresh"), this, &MainWindow::onRefreshDevices);
+    toolbar->addAction(tr("Refresh"),    this, [this]() { m_viewModel->scanDevices(); });
 
     // --- central widget: data table ---
     auto *central = new QWidget(this);
@@ -74,45 +63,24 @@ void MainWindow::setupUi()
     vbox->addWidget(tableLabel);
 
     auto *table = new QTableView(central);
-    table->setModel(m_cache->tableModel());
+    table->setModel(m_viewModel->dataModel());
     vbox->addWidget(table);
 
     setCentralWidget(central);
 
     // --- device dock ---
     auto *deviceDock = new QDockWidget(tr("Devices"), this);
-    auto *tree       = new QTreeWidget(deviceDock);
-    tree->setHeaderLabel(tr("Device Tree"));
-    deviceDock->setWidget(tree);
+    auto *deviceTree = new QTreeWidget(deviceDock);
+    deviceTree->setHeaderLabel(tr("Device Tree"));
+    deviceDock->setWidget(deviceTree);
     addDockWidget(Qt::LeftDockWidgetArea, deviceDock);
 
     // --- alarm dock ---
     auto *alarmDock = new QDockWidget(tr("Alarms"), this);
-    auto *alarmList = new QTreeWidget(alarmDock);
-    alarmList->setHeaderLabels({tr("Time"), tr("Severity"), tr("Message")});
-    alarmDock->setWidget(alarmList);
+    auto *alarmTree = new QTreeWidget(alarmDock);
+    alarmTree->setHeaderLabels({tr("Time"), tr("Severity"), tr("Message")});
+    alarmDock->setWidget(alarmTree);
     addDockWidget(Qt::BottomDockWidgetArea, alarmDock);
-
-    connect(tree, &QTreeWidget::currentItemChanged,
-            this, [this](QTreeWidgetItem *current, QTreeWidgetItem *) {
-                if (current)
-                    onDeviceSelected(current->data(0, Qt::UserRole).toInt());
-            });
-}
-
-void MainWindow::setupConnections()
-{
-    // serial state → UI
-    connect(m_serial, &CommInterface::stateChanged,
-            this, &MainWindow::updateConnectionState);
-
-    // device data → cache
-    connect(m_deviceMgr, &DeviceManager::deviceDataChanged,
-            m_cache, &DataCache::updateValue);
-
-    // alarms
-    connect(m_deviceMgr, &DeviceManager::alarmTriggered,
-            m_alarms, &AlarmEngine::onAlarmTriggered);
 }
 
 void MainWindow::createStatusBar()
@@ -123,44 +91,58 @@ void MainWindow::createStatusBar()
 }
 
 // ---------------------------------------------------------------------------
-// slots
+// ViewModel binding — all View ↔ ViewModel connections
 // ---------------------------------------------------------------------------
 
-void MainWindow::onConnectClicked()
+void MainWindow::bindToViewModel()
 {
-    if (!m_serial || m_serial->isOpen()) return;
+    // ---- connected state → status bar ----
+    connect(m_viewModel, &MainViewModel::connectedChanged, this, [this]() {
+        auto *label = statusBar()->findChild<QLabel *>("connectionStatus");
+        if (label)
+            label->setText(m_viewModel->isConnected()
+                ? tr("Connected") : tr("Disconnected"));
+    });
 
-    // In a real app you'd get these from a settings dialog or config.
-    m_serial->setPortName("COM3");
-    m_serial->setBaudRate(9600);
+    // ---- status text → status bar message ----
+    connect(m_viewModel, &MainViewModel::statusTextChanged, this, [this](const QString &text) {
+        statusBar()->showMessage(text, 3000);
+    });
 
-    if (!m_serial->open()) {
-        QMessageBox::warning(this, tr("Connection Error"),
-                             tr("Failed to open serial port."));
-        return;
-    }
-    m_modbus->open();
-}
+    // ---- connection errors → dialog ----
+    connect(m_viewModel, &MainViewModel::connectionError, this, [this](const QString &msg) {
+        QMessageBox::warning(this, tr("Connection Error"), msg);
+    });
 
-void MainWindow::onDisconnectClicked()
-{
-    m_modbus->close();
-    m_serial->close();
-}
+    // ---- new alarm → alarm dock ----
+    connect(m_viewModel, &MainViewModel::newAlarmTriggered, this, [this](const QString &msg) {
+        // Find the alarm dock tree widget and add a row
+        for (auto *dock : findChildren<QDockWidget *>()) {
+            if (dock->windowTitle() == tr("Alarms")) {
+                if (auto *tree = dock->findChild<QTreeWidget *>()) {
+                    auto *item = new QTreeWidgetItem(tree);
+                    item->setText(0, QDateTime::currentDateTime().toString("hh:mm:ss"));
+                    item->setText(1, tr("Warning"));
+                    item->setText(2, msg);
+                }
+                break;
+            }
+        }
+    });
 
-void MainWindow::onRefreshDevices()
-{
-    m_deviceMgr->scan();
-}
-
-void MainWindow::onDeviceSelected(int index)
-{
-    m_deviceMgr->setActiveDevice(index);
-}
-
-void MainWindow::updateConnectionState(bool connected)
-{
-    auto *label = statusBar()->findChild<QLabel *>("connectionStatus");
-    if (label)
-        label->setText(connected ? tr("Connected") : tr("Disconnected"));
+    // ---- device list changed → device tree ----
+    connect(m_viewModel, &MainViewModel::deviceListChanged, this, [this]() {
+        // Find the device dock tree and refresh
+        for (auto *dock : findChildren<QDockWidget *>()) {
+            if (dock->windowTitle() == tr("Devices")) {
+                if (auto *tree = dock->findChild<QTreeWidget *>()) {
+                    tree->clear();
+                    // We don't have direct access to the device list through Q_PROPERTY yet,
+                    // but the connection keeps the two in sync for future expansion.
+                    Q_UNUSED(tree)
+                }
+                break;
+            }
+        }
+    });
 }

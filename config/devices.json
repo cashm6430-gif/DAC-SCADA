@@ -1,0 +1,39 @@
+{
+  "devices":
+  [
+    {
+      "deviceName": "温控PLC-1",
+      "ip": "192.168.1.100",
+      "port": 502
+    }
+  ],
+  "channels": [
+    {
+      "regAddr": 0,
+      "name": "温度",
+      "unit": "°C",
+      "scale": 0.01,
+      "upperLimit": 85.0,
+      "lowerLimit": 0.0,
+      "color": "#FF0000"
+    },
+    {
+      "regAddr": 1,
+      "name": "湿度",
+      "unit": "%",
+      "scale": 0.1,
+      "upperLimit": 80.0,
+      "lowerLimit": 10.0,
+      "color": "#0000FF"
+    },
+    {
+      "regAddr": 2,
+      "name": "湿度",
+      "unit": "%",
+      "scale": 0.1,
+      "upperLimit": 80.0,
+      "lowerLimit": 10.0,
+      "color": "#0000FF"
+    }
+  ]
+}
