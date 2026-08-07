@@ -6,11 +6,11 @@
 #include <QObject>
 #include "types.h"
 
-class channelManager : public QObject{
+class ChannelManager : public QObject{
     Q_OBJECT
 public:
-    explicit channelManager(QObject *parent = nullptr);
-    ~channelManager();
+    explicit ChannelManager(QObject *parent = nullptr);
+    ~ChannelManager();
 
     void addChannel(const Channel &ch);
     void removeChannel(int index);

@@ -2,12 +2,13 @@
 #define MAIN_VIEWMODEL_H
 
 #include <QObject>
-#include <QVariantList>
+#include <QVector>
+#include "core/types.h"
 
-class SerialPortComm;
-class ModbusRtu;
-class DeviceManager;
+class ModbusTcpClient;
+class DataCollector;
 class DataCache;
+class DataCacheModel;
 class AlarmEngine;
 class QAbstractTableModel;
 
@@ -16,55 +17,33 @@ class MainViewModel : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged)
-    Q_PROPERTY(QString portName READ portName WRITE setPortName NOTIFY portNameChanged)
-    Q_PROPERTY(int activeAlarmCount READ activeAlarmCount NOTIFY activeAlarmCountChanged)
-    Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
-
 public:
     explicit MainViewModel(QObject *parent = nullptr);
     ~MainViewModel() override;
 
-    // ---- Properties ----
-    bool isConnected() const;
+    // ---- Models exposed to the View ----
+    QAbstractTableModel *dataModel() const;       // channel value table
+    const QVector<AlarmRecord> &alarms() const;   // alarm history
 
-    QString portName() const;
-    void setPortName(const QString &name);
+    DataCache  *cache() const { return m_cache; }
+    AlarmEngine *alarmEngine() const { return m_alarms; }
 
-    int activeAlarmCount() const;
-
-    QString statusText() const;
-
-    // ---- Models exposed to View for direct binding ----
-    QAbstractTableModel *dataModel() const;
-
-    // ---- Commands (Q_INVOKABLE so View can call from QML or invokeMethod) ----
-    Q_INVOKABLE void connectToDevice();
-    Q_INVOKABLE void disconnectFromDevice();
-    Q_INVOKABLE void scanDevices();
-    Q_INVOKABLE void selectDevice(int index);
-    Q_INVOKABLE void acknowledgeAlarm(int index);
+    // ---- Commands ----
+    void loadConfig(const QString &jsonPath);
+    void connectToDevice();
+    void disconnectFromDevice();
 
 signals:
-    void connectedChanged();
-    void portNameChanged();
-    void activeAlarmCountChanged();
-    void statusTextChanged(const QString &text);
-
-    /// Non-property signals for one-shot UI feedback.
-    void connectionError(const QString &message);
-    void deviceListChanged();
-    void newAlarmTriggered(const QString &message);
+    void connectedChanged(bool connected);
+    void statusTextChanged(const QString &message);
+    void newAlarm(const AlarmRecord &record);
 
 private:
-    void setupModelConnections();
-
-    // ---- Model objects (owned) ----
-    SerialPortComm *m_serial   = nullptr;
-    ModbusRtu      *m_modbus   = nullptr;
-    DeviceManager  *m_deviceMgr = nullptr;
-    DataCache      *m_cache    = nullptr;
-    AlarmEngine    *m_alarms   = nullptr;
+    ModbusTcpClient *m_client    = nullptr;
+    DataCollector   *m_collector = nullptr;
+    DataCache       *m_cache     = nullptr;
+    DataCacheModel  *m_model     = nullptr;
+    AlarmEngine     *m_alarms    = nullptr;
 };
 
 #endif // MAIN_VIEWMODEL_H

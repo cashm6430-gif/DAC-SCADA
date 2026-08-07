@@ -1,10 +1,9 @@
 {
-  "devices":
-  [
+  "devices": [
     {
       "deviceName": "温控PLC-1",
-      "ip": "192.168.1.100",
-      "port": 502
+      "ip": "127.0.0.1",
+      "port": 1502
     }
   ],
   "channels": [
@@ -13,27 +12,40 @@
       "name": "温度",
       "unit": "°C",
       "scale": 0.01,
-      "upperLimit": 85.0,
-      "lowerLimit": 0.0,
+      "offset": 0.0,
+      "upperLimit": 35.0,
+      "lowerLimit": 5.0,
       "color": "#FF0000"
     },
     {
       "regAddr": 1,
       "name": "湿度",
       "unit": "%",
-      "scale": 0.1,
-      "upperLimit": 80.0,
-      "lowerLimit": 10.0,
+      "scale": 0.01,
+      "offset": 0.0,
+      "upperLimit": 65.0,
+      "lowerLimit": 20.0,
       "color": "#0000FF"
     },
     {
       "regAddr": 2,
-      "name": "湿度",
-      "unit": "%",
-      "scale": 0.1,
-      "upperLimit": 80.0,
-      "lowerLimit": 10.0,
-      "color": "#0000FF"
+      "name": "压力",
+      "unit": "kPa",
+      "scale": 0.001,
+      "offset": 0.0,
+      "upperLimit": 14.0,
+      "lowerLimit": 4.0,
+      "color": "#00AA00"
+    },
+    {
+      "regAddr": 3,
+      "name": "流量",
+      "unit": "m³/h",
+      "scale": 0.01,
+      "offset": 0.0,
+      "upperLimit": 3.5,
+      "lowerLimit": 1.5,
+      "color": "#FF8800"
     }
   ]
 }

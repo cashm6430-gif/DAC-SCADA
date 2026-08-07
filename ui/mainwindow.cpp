@@ -1,6 +1,9 @@
 #include "mainwindow.h"
 #include "main_viewmodel.h"
+#include "curve_panel.h"
 #include "simulator/simulated_modbus_server.h"
+#include "core/types.h"
+#include "core/data_cache.h"
 
 #include <QToolBar>
 #include <QStatusBar>
@@ -9,10 +12,17 @@
 #include <QDockWidget>
 #include <QTreeWidget>
 #include <QTableView>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QSplitter>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QApplication>
+#include <QTimer>
+#include <QFile>
+#include <QTextStream>
 
 // ---------------------------------------------------------------------------
 // construction / destruction
@@ -27,74 +37,162 @@ MainWindow::MainWindow(QWidget *parent)
     bindToViewModel();
     createStatusBar();
 
-    setWindowTitle("DAC-SCADA");
-    resize(1280, 720);
+    setWindowTitle(QStringLiteral("DAC-SCADA — 数据采集与监控系统"));
+    resize(1400, 850);
 }
 
 MainWindow::~MainWindow() = default;
 
+void MainWindow::loadConfiguration(const QString &jsonPath)
+{
+    m_viewModel->loadConfig(jsonPath);
+}
+
+void MainWindow::connectToDevice()
+{
+    m_viewModel->connectToDevice();
+}
+
+void MainWindow::runSelfTest(const QString &outPath)
+{
+    // 1. 启动模拟下位机
+    if (!m_simulator->start(1502, QStringLiteral("127.0.0.1"))) {
+        QMessageBox::warning(this, tr("自检"),
+                             tr("模拟下位机启动失败，端口可能被占用"));
+        return;
+    }
+    // 2. 连接
+    m_viewModel->connectToDevice();
+
+    // 3. 采集 3 秒后读取结果
+    QTimer::singleShot(3000, this, [this, outPath]() {
+        QFile file(outPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            QTextStream ts(&file);
+            ts << "DAC-SCADA self-test\n";
+            ts << "==================\n";
+            auto *cache = m_viewModel->cache();
+            for (const Channel &ch : cache->channels()) {
+                const double v = cache->value(ch.regAddr);
+                ts << ch.name << " = " << QString::number(v, 'f', 3)
+                   << " " << ch.unit << "\n";
+            }
+            ts << "==================\n";
+            const auto &alarms = m_viewModel->alarms();
+            ts << "alarms: " << alarms.size() << "\n";
+            // 打印前 5 条报警消息，验证中文消息格式
+            for (int i = 0; i < qMin(5, alarms.size()); ++i) {
+                ts << "  [" << alarms.at(i).timestamp.toString("hh:mm:ss")
+                   << "] " << alarms.at(i).message << "\n";
+            }
+            file.close();
+        }
+        QApplication::exit(0);
+    });
+}
+
 // ---------------------------------------------------------------------------
-// UI setup — pure widget creation, no business logic
+// UI setup
 // ---------------------------------------------------------------------------
 
 void MainWindow::setupUi()
 {
-    // --- menu bar ---
+    // ======================= 菜单栏 =======================
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(tr("&Connect"),    this, [this]() { m_viewModel->connectToDevice(); });
     fileMenu->addAction(tr("&Disconnect"), this, [this]() { m_viewModel->disconnectFromDevice(); });
     fileMenu->addSeparator();
     fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
 
-    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
-    viewMenu->addAction(tr("&Refresh Devices"), this, [this]() { m_viewModel->scanDevices(); });
-
     QMenu *simMenu = menuBar()->addMenu(tr("&Simulator"));
     QAction *simToggle = simMenu->addAction(tr("&Start Simulated PLC"),
                                             this, &MainWindow::toggleSimulator);
     simToggle->setObjectName("simulatorToggle");
 
-    // --- toolbar ---
+    // ======================= 工具栏 =======================
     QToolBar *toolbar = addToolBar(tr("Main"));
-    toolbar->addAction(tr("Connect"),    this, [this]() { m_viewModel->connectToDevice(); });
-    toolbar->addAction(tr("Disconnect"), this, [this]() { m_viewModel->disconnectFromDevice(); });
+    toolbar->setMovable(false);
+    toolbar->addAction(tr("▶ 启动模拟器"), this, &MainWindow::toggleSimulator);
     toolbar->addSeparator();
-    toolbar->addAction(tr("Refresh"),    this, [this]() { m_viewModel->scanDevices(); });
+    toolbar->addAction(tr("🔗 连接"),    this, [this]() { m_viewModel->connectToDevice(); });
+    toolbar->addAction(tr("⏹ 断开"),    this, [this]() { m_viewModel->disconnectFromDevice(); });
 
-    // --- central widget: data table ---
+    // ======================= 中央区域：数据表 + 曲线 =======================
     auto *central = new QWidget(this);
     auto *vbox    = new QVBoxLayout(central);
+    vbox->setContentsMargins(4, 4, 4, 4);
 
-    auto *tableLabel = new QLabel(tr("Real-time Data"), central);
-    tableLabel->setStyleSheet("font-weight: bold; font-size: 14px;");
-    vbox->addWidget(tableLabel);
+    auto *splitter = new QSplitter(Qt::Vertical, central);
 
-    auto *table = new QTableView(central);
-    table->setModel(m_viewModel->dataModel());
-    vbox->addWidget(table);
+    // --- 上方：被监控通道数据表 ---
+    auto *tableContainer = new QWidget(splitter);
+    auto *tableLayout = new QVBoxLayout(tableContainer);
+    tableLayout->setContentsMargins(0, 0, 0, 0);
 
+    auto *tableTitle = new QLabel(tr("被监控的通道和数据"), tableContainer);
+    tableTitle->setStyleSheet("font-weight: bold; font-size: 14px; padding: 4px;");
+    tableLayout->addWidget(tableTitle);
+
+    m_dataTable = new QTableView(tableContainer);
+    m_dataTable->setModel(m_viewModel->dataModel());
+    m_dataTable->horizontalHeader()->setStretchLastSection(true);
+    m_dataTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_dataTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tableLayout->addWidget(m_dataTable);
+
+    // --- 下方：实时曲线 ---
+    auto *curveContainer = new QWidget(splitter);
+    auto *curveLayout = new QVBoxLayout(curveContainer);
+    curveLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto *curveTitle = new QLabel(tr("实时曲线"), curveContainer);
+    curveTitle->setStyleSheet("font-weight: bold; font-size: 14px; padding: 4px;");
+    curveLayout->addWidget(curveTitle);
+
+    m_curvePanel = new CurvePanel(curveContainer);
+    curveLayout->addWidget(m_curvePanel);
+
+    splitter->addWidget(tableContainer);
+    splitter->addWidget(curveContainer);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 2);
+
+    vbox->addWidget(splitter);
     setCentralWidget(central);
 
-    // --- device dock ---
-    auto *deviceDock = new QDockWidget(tr("Devices"), this);
-    auto *deviceTree = new QTreeWidget(deviceDock);
-    deviceTree->setHeaderLabel(tr("Device Tree"));
-    deviceDock->setWidget(deviceTree);
+    // ======================= 左侧：硬件列表 dock =======================
+    auto *deviceDock = new QDockWidget(tr("硬件列表"), this);
+    deviceDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_deviceTree = new QTreeWidget(deviceDock);
+    m_deviceTree->setHeaderLabels({tr("设备"), tr("IP"), tr("状态")});
+    m_deviceTree->setColumnWidth(0, 90);
+    deviceDock->setWidget(m_deviceTree);
     addDockWidget(Qt::LeftDockWidgetArea, deviceDock);
 
-    // --- alarm dock ---
-    auto *alarmDock = new QDockWidget(tr("Alarms"), this);
-    auto *alarmTree = new QTreeWidget(alarmDock);
-    alarmTree->setHeaderLabels({tr("Time"), tr("Severity"), tr("Message")});
-    alarmDock->setWidget(alarmTree);
+    // ======================= 底部：报警列表 dock =======================
+    auto *alarmDock = new QDockWidget(tr("警告信息"), this);
+    alarmDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+    m_alarmTable = new QTableWidget(0, 3, alarmDock);
+    m_alarmTable->setHorizontalHeaderLabels({tr("时间"), tr("级别"), tr("信息")});
+    m_alarmTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_alarmTable->verticalHeader()->setVisible(false);
+    m_alarmTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_alarmTable->setMaximumHeight(200);
+    alarmDock->setWidget(m_alarmTable);
     addDockWidget(Qt::BottomDockWidgetArea, alarmDock);
+
+    // 默认在硬件列表放一个占位设备（连接后刷新真实信息）
+    m_deviceTree->clear();
+    auto *placeholder = new QTreeWidgetItem(m_deviceTree);
+    placeholder->setText(0, tr("(未连接)"));
+    placeholder->setText(2, tr("离线"));
 }
 
 void MainWindow::createStatusBar()
 {
-    auto *statusLabel = new QLabel(tr("Disconnected"));
-    statusLabel->setObjectName("connectionStatus");
-    statusBar()->addPermanentWidget(statusLabel);
+    m_statusLabel = new QLabel(tr("Disconnected"), this);
+    m_statusLabel->setObjectName("connectionStatus");
+    statusBar()->addPermanentWidget(m_statusLabel);
 }
 
 // ---------------------------------------------------------------------------
@@ -113,76 +211,92 @@ void MainWindow::toggleSimulator()
 
     if (wasRunning) {
         m_simulator->stop();
-        statusBar()->showMessage(tr("Simulated PLC stopped"), 3000);
+        statusBar()->showMessage(tr("模拟下位机已停止"), 3000);
         if (action)
             action->setText(tr("&Start Simulated PLC"));
     } else {
         if (m_simulator->start(1502, QStringLiteral("127.0.0.1"))) {
             statusBar()->showMessage(
-                tr("Simulated PLC running at 127.0.0.1:1502 (Modbus TCP)"), 5000);
+                tr("模拟下位机运行中: 127.0.0.1:1502 (Modbus TCP)"), 5000);
             if (action)
                 action->setText(tr("&Stop Simulated PLC"));
         } else {
             QMessageBox::warning(this, tr("Simulator"),
-                                 tr("Failed to start simulated PLC.\n"
-                                    "Port 1502 may already be in use."));
+                                 tr("启动模拟下位机失败。\n端口 1502 可能被占用。"));
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// ViewModel binding — all View ↔ ViewModel connections
+// ViewModel binding
 // ---------------------------------------------------------------------------
 
 void MainWindow::bindToViewModel()
 {
-    // ---- connected state → status bar ----
-    connect(m_viewModel, &MainViewModel::connectedChanged, this, [this]() {
-        auto *label = statusBar()->findChild<QLabel *>("connectionStatus");
-        if (label)
-            label->setText(m_viewModel->isConnected()
-                ? tr("Connected") : tr("Disconnected"));
+    // ---- 连接状态 → 状态栏 + 硬件列表 ----
+    connect(m_viewModel, &MainViewModel::connectedChanged, this, [this](bool connected) {
+        if (m_statusLabel)
+            m_statusLabel->setText(connected ? tr("已连接") : tr("未连接"));
+
+        if (m_deviceTree) {
+            m_deviceTree->clear();
+            auto *item = new QTreeWidgetItem(m_deviceTree);
+            item->setText(0, tr("PLC-1"));
+            item->setText(1, QStringLiteral("127.0.0.1:1502"));
+            item->setText(2, connected ? tr("在线") : tr("离线"));
+        }
     });
 
-    // ---- status text → status bar message ----
+    // ---- 状态消息 → 状态栏 ----
     connect(m_viewModel, &MainViewModel::statusTextChanged, this, [this](const QString &text) {
         statusBar()->showMessage(text, 3000);
     });
 
-    // ---- connection errors → dialog ----
-    connect(m_viewModel, &MainViewModel::connectionError, this, [this](const QString &msg) {
-        QMessageBox::warning(this, tr("Connection Error"), msg);
-    });
-
-    // ---- new alarm → alarm dock ----
-    connect(m_viewModel, &MainViewModel::newAlarmTriggered, this, [this](const QString &msg) {
-        // Find the alarm dock tree widget and add a row
-        for (auto *dock : findChildren<QDockWidget *>()) {
-            if (dock->windowTitle() == tr("Alarms")) {
-                if (auto *tree = dock->findChild<QTreeWidget *>()) {
-                    auto *item = new QTreeWidgetItem(tree);
-                    item->setText(0, QDateTime::currentDateTime().toString("hh:mm:ss"));
-                    item->setText(1, tr("Warning"));
-                    item->setText(2, msg);
-                }
-                break;
-            }
+    // ---- 报警 → 报警表 ----
+    connect(m_viewModel, &MainViewModel::newAlarm, this,
+            [this](const AlarmRecord &rec) {
+        QString level;
+        QColor  color;
+        switch (rec.severity) {
+        case AlarmRecord::Critical:
+            level = tr("严重"); color = Qt::red;    break;
+        case AlarmRecord::Warning:
+            level = tr("警告"); color = QColor(255, 140, 0); break;
+        default:
+            level = tr("信息"); color = Qt::darkGreen; break;
+        }
+        appendAlarmRow(rec.timestamp.toString(QStringLiteral("hh:mm:ss")),
+                       level, rec.message);
+        // 最后一条高亮
+        const int row = m_alarmTable->rowCount() - 1;
+        if (row >= 0) {
+            auto *item = m_alarmTable->item(row, 1);
+            if (item) item->setForeground(color);
         }
     });
 
-    // ---- device list changed → device tree ----
-    connect(m_viewModel, &MainViewModel::deviceListChanged, this, [this]() {
-        // Find the device dock tree and refresh
-        for (auto *dock : findChildren<QDockWidget *>()) {
-            if (dock->windowTitle() == tr("Devices")) {
-                if (auto *tree = dock->findChild<QTreeWidget *>()) {
-                    tree->clear();
-                    // We don't have direct access to the device list through Q_PROPERTY yet,
-                    // but the connection keeps the two in sync for future expansion.
-                    Q_UNUSED(tree)
-                }
-                break;
-            }
-        }
-    });
+    // ---- 通道配置变化 → 曲线重建系列 ----
+    connect(m_viewModel->cache(), &DataCache::channelsChanged, this,
+            [this]() {
+                if (m_curvePanel)
+                    m_curvePanel->setChannels(m_viewModel->cache()->channels());
+            });
+
+    // ---- 通道值变化 → 曲线追加点 ----
+    connect(m_viewModel->cache(), &DataCache::valueChanged, this,
+            [this](int regAddr, double value) {
+                if (m_curvePanel)
+                    m_curvePanel->addPoint(regAddr, value);
+            });
+}
+
+void MainWindow::appendAlarmRow(const QString &time, const QString &severity,
+                                const QString &message)
+{
+    const int row = m_alarmTable->rowCount();
+    m_alarmTable->insertRow(row);
+    m_alarmTable->setItem(row, 0, new QTableWidgetItem(time));
+    m_alarmTable->setItem(row, 1, new QTableWidgetItem(severity));
+    m_alarmTable->setItem(row, 2, new QTableWidgetItem(message));
+    m_alarmTable->scrollToBottom();
 }

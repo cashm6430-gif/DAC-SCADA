@@ -3,10 +3,12 @@
 
 #include <QObject>
 #include <QVector>
+#include <QHash>
 #include <QDateTime>
 #include "types.h"
 
-/// Collects, persists and signals alarm events.
+/// Monitors channel values against their upper/lower limits and emits
+/// alarm events when a channel crosses a threshold (and when it recovers).
 class AlarmEngine : public QObject
 {
     Q_OBJECT
@@ -14,19 +16,22 @@ class AlarmEngine : public QObject
 public:
     explicit AlarmEngine(QObject *parent = nullptr);
 
-    const QVector<AlarmRecord> &activeAlarms() const;
-    const QVector<AlarmRecord> &history() const;
+    /// Evaluate a freshly-sampled channel value. Emits newAlarm() when the
+    /// state transitions (normal → high/low, or high/low → normal).
+    void checkValue(const Channel &ch, double value);
 
-public slots:
-    void onAlarmTriggered(int deviceAddr, const QString &message);
-    void acknowledgeAlarm(int index);
+    const QVector<AlarmRecord> &history() const { return m_history; }
 
 signals:
     void newAlarm(const AlarmRecord &record);
-    void alarmAcknowledged(int index);
 
 private:
-    QVector<AlarmRecord> m_active;
+    enum class Status { Normal, High, Low };
+
+    void raise(const Channel &ch, const QString &message,
+               AlarmRecord::Severity severity);
+
+    QHash<int, Status> m_states;   // regAddr → last status
     QVector<AlarmRecord> m_history;
 };
 

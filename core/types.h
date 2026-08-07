@@ -19,9 +19,11 @@ struct Channel
 
 /// Describes a single field device on the bus.
 struct DeviceInfo {
-    qint16  address = 0;
+    qint16  address = 1;
     QString name;
     QString type;       // e.g. "temperature_sensor", "pump_controller"
+    QString ip;
+    quint16 port = 1502;
     bool    online = false;
 };
 

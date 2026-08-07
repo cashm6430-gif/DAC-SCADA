@@ -5,29 +5,29 @@
 #include <QJsonArray>
 #include <QCoreApplication>
 
-channelManager::channelManager(QObject *parent) : QObject(parent)
+ChannelManager::ChannelManager(QObject *parent) : QObject(parent)
 {
     QString filePath = QCoreApplication::applicationDirPath() + "/config/device.json";
     loadChannelsFromJson(filePath,m_channels);
 }
 
-channelManager::~channelManager()
+ChannelManager::~ChannelManager()
 {
-
+    m_channels.clear();
 }
 
-void channelManager::addChannel(const Channel &ch)
+void ChannelManager::addChannel(const Channel &ch)
 {
     m_channels.append(ch);
     emit channelsChanged();      // 只是喊一嗓子，不知道也不关心谁在听
 }
 
-QList<Channel> channelManager::channels() const
+QList<Channel> ChannelManager::channels() const
 {
     return m_channels;
 }
 
-bool channelManager::loadChannelsFromJson(const QString &filePath, QList<Channel> &channels)
+bool ChannelManager::loadChannelsFromJson(const QString &filePath, QList<Channel> &channels)
 {
     // 1. 读文件内容
     QFile file(filePath);
@@ -79,7 +79,7 @@ bool channelManager::loadChannelsFromJson(const QString &filePath, QList<Channel
     return true;
 }
 
-void channelManager::removeChannel(int index)
+void ChannelManager::removeChannel(int index)
 {
     if (index < 0 || index >= m_channels.size()) {
         qWarning() << "removeChannel: index" << index << "out of range";

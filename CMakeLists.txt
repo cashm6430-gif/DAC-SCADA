@@ -49,10 +49,14 @@ set(SOURCES
     communication/serialport_comm.cpp
     communication/modbus_rtu.h
     communication/modbus_rtu.cpp
+    communication/modbus_tcp_client.h
+    communication/modbus_tcp_client.cpp
     ui/mainwindow.h
     ui/mainwindow.cpp
     ui/main_viewmodel.h
     ui/main_viewmodel.cpp
+    ui/curve_panel.h
+    ui/curve_panel.cpp
     core/device_manager.h
     core/device_manager.cpp
     core/data_cache.h
@@ -61,6 +65,8 @@ set(SOURCES
     core/alarm_engine.cpp
     core/channel_manager.h
     core/channel_manager.cpp
+    core/data_collector.h
+    core/data_collector.cpp
     core/types.h
     simulator/simulated_device.h
     simulator/simulated_device.cpp
@@ -119,3 +125,12 @@ if(EXISTS "${_windeployqt}")
 else()
     message(WARNING "windeployqt not found — DLLs will not be copied automatically")
 endif()
+
+# ── Copy config/ next to the executable (post-build) ─
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/config"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config"
+    COMMENT "Copying config/ to executable directory..."
+    VERBATIM
+)
