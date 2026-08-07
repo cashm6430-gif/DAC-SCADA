@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "main_viewmodel.h"
+#include "simulator/simulated_modbus_server.h"
 
 #include <QToolBar>
 #include <QStatusBar>
@@ -20,6 +21,7 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_viewModel(new MainViewModel(this))
+    , m_simulator(new SimulatedModbusServer(this))
 {
     setupUi();
     bindToViewModel();
@@ -46,6 +48,11 @@ void MainWindow::setupUi()
 
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(tr("&Refresh Devices"), this, [this]() { m_viewModel->scanDevices(); });
+
+    QMenu *simMenu = menuBar()->addMenu(tr("&Simulator"));
+    QAction *simToggle = simMenu->addAction(tr("&Start Simulated PLC"),
+                                            this, &MainWindow::toggleSimulator);
+    simToggle->setObjectName("simulatorToggle");
 
     // --- toolbar ---
     QToolBar *toolbar = addToolBar(tr("Main"));
@@ -88,6 +95,39 @@ void MainWindow::createStatusBar()
     auto *statusLabel = new QLabel(tr("Disconnected"));
     statusLabel->setObjectName("connectionStatus");
     statusBar()->addPermanentWidget(statusLabel);
+}
+
+// ---------------------------------------------------------------------------
+// Simulator
+// ---------------------------------------------------------------------------
+
+bool MainWindow::startSimulatorAutomatically()
+{
+    return m_simulator->start(1502, QStringLiteral("127.0.0.1"));
+}
+
+void MainWindow::toggleSimulator()
+{
+    auto *action = findChild<QAction *>("simulatorToggle");
+    const bool wasRunning = m_simulator->isListening();
+
+    if (wasRunning) {
+        m_simulator->stop();
+        statusBar()->showMessage(tr("Simulated PLC stopped"), 3000);
+        if (action)
+            action->setText(tr("&Start Simulated PLC"));
+    } else {
+        if (m_simulator->start(1502, QStringLiteral("127.0.0.1"))) {
+            statusBar()->showMessage(
+                tr("Simulated PLC running at 127.0.0.1:1502 (Modbus TCP)"), 5000);
+            if (action)
+                action->setText(tr("&Stop Simulated PLC"));
+        } else {
+            QMessageBox::warning(this, tr("Simulator"),
+                                 tr("Failed to start simulated PLC.\n"
+                                    "Port 1502 may already be in use."));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

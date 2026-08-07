@@ -62,6 +62,10 @@ set(SOURCES
     core/channel_manager.h
     core/channel_manager.cpp
     core/types.h
+    simulator/simulated_device.h
+    simulator/simulated_device.cpp
+    simulator/simulated_modbus_server.h
+    simulator/simulated_modbus_server.cpp
 )
 
 # ── Executable ────────────────────────────────────
