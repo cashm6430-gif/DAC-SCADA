@@ -31,6 +31,10 @@ QVariant DataCacheModel::data(const QModelIndex &index, int role) const
     const Channel &ch = channels.at(index.row());
     const int devIdx = m_cache->currentDevice();
 
+    // Center all cell content
+    if (role == Qt::TextAlignmentRole)
+        return Qt::AlignCenter;
+
     if (role == Qt::DisplayRole || role == Qt::EditRole) {
         switch (index.column()) {
         case ColName:

@@ -49,6 +49,10 @@ public:
 
     /// Whether the TCP+Modbus connection for device \a index is established.
     bool isDeviceConnected(int index) const;
+    /// Whether the device is considered online (has responded recently).
+    bool isDeviceOnline(int index) const;
+    /// Consecutive poll failures of device \a index (diagnostics).
+    int failureCount(int index) const;
     bool pollingActive() const { return m_pollTimer.isActive(); }
 
 signals:
@@ -62,6 +66,8 @@ private:
         ModbusSerialClient *serialClient = nullptr;
         int startAddr = 0;
         int regCount  = 0;
+        int failCount = 0;   // consecutive poll failures (timeouts)
+        qint64 lastSuccessMs = 0;  // last successful read timestamp
     };
 
     DataCache   *m_cache;
@@ -72,10 +78,17 @@ private:
     QTimer m_pollTimer;
     QHash<QString, ModbusSerialClient*> m_serialClients;  // portName → client
 
+    /// Consecutive failures after which a device is considered offline.
+    static constexpr int kOfflineThreshold = 2;
+    /// No successful response for this long → device considered offline.
+    static constexpr int kOfflineTimeoutMs = 3000;
+
 private slots:
     void onPollTick();
     void onRegistersRead(DeviceContext *ctx, const QModbusDataUnit &unit);
     void onConnectionChanged(DeviceContext *ctx, bool connected);
+    void onCommError(DeviceContext *ctx, const QString &msg);
+    void setDeviceOnline(DeviceContext *ctx, bool online);
 };
 
 #endif // DATA_COLLECTOR_H

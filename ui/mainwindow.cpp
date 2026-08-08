@@ -324,7 +324,12 @@ void MainWindow::runSelfTest(const QString &outPath)
     QTimer::singleShot(500, this, [this, outPath, ok1, ok2, ok3]() {
         m_viewModel->connectToDevice();
 
-    QTimer::singleShot(3000, this, [this, outPath, ok1, ok2, ok3]() {
+    // 2 秒后关闭串口模拟器，验证离线检测
+    QTimer::singleShot(2000, this, [this]() {
+        m_serialSim->stop();
+    });
+
+    QTimer::singleShot(8000, this, [this, outPath, ok1, ok2, ok3]() {
         QFile file(outPath);
         if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             QTextStream ts(&file);
@@ -335,12 +340,21 @@ void MainWindow::runSelfTest(const QString &outPath)
                << ", serialCOM6: " << (ok3 ? "OK" : "FAIL") << "\n";
             ts << "pollingActive: "
                << (m_viewModel->collector()->pollingActive() ? "yes" : "no") << "\n";
+            ts << "NOTE: serial COM6 stopped at t=2s; pump should be OFFLINE\n";
+            ts << "serialSim listening: "
+               << (m_serialSim->isListening() ? "yes" : "no") << "\n";
             auto *cache = m_viewModel->cache();
             const auto &devices = cache->devices();
             for (int d = 0; d < devices.size(); ++d) {
                 ts << "[" << devices.at(d).name << "]\n"
                    << "  connected: "
                    << (m_viewModel->collector()->isDeviceConnected(d) ? "yes" : "no")
+                   << "\n"
+                   << "  online: "
+                   << (m_viewModel->collector()->isDeviceOnline(d) ? "yes" : "no")
+                   << "\n"
+                   << "  failCount: "
+                   << m_viewModel->collector()->failureCount(d)
                    << "\n";
                 for (const Channel &ch : devices.at(d).channels) {
                     const double v = cache->value(d, ch.regAddr);

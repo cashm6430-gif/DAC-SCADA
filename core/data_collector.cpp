@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDateTime>
 #include <QDebug>
 #include <algorithm>
 #include <utility>
@@ -122,7 +123,7 @@ void DataCollector::connectAll()
             connect(c, &ModbusTcpClient::registersRead,
                     this, [this, ctx](const QModbusDataUnit &unit) { onRegistersRead(ctx, unit); });
             connect(c, &ModbusTcpClient::communicationError,
-                    this, [this](const QString &msg) { emit statusMessage(msg); });
+                    this, [this, ctx](const QString &msg) { onCommError(ctx, msg); });
             ctx->tcpClient = c;
 
             const bool ok = c->connectTo(ctx->info.ip, ctx->info.port, ctx->info.address);
@@ -140,7 +141,7 @@ void DataCollector::connectAll()
                 connect(c, &ModbusSerialClient::registersRead,
                         this, [this, ctx](const QModbusDataUnit &unit) { onRegistersRead(ctx, unit); });
                 connect(c, &ModbusSerialClient::communicationError,
-                        this, [this](const QString &msg) { emit statusMessage(msg); });
+                        this, [this, ctx](const QString &msg) { onCommError(ctx, msg); });
                 m_serialClients.insert(ctx->info.serialPort, c);
             }
             ctx->serialClient = c;
@@ -193,12 +194,29 @@ bool DataCollector::isDeviceConnected(int index) const
     return ctx->serialClient && ctx->serialClient->isConnected();
 }
 
+bool DataCollector::isDeviceOnline(int index) const
+{
+    if (index < 0 || index >= m_ctx.size())
+        return false;
+    return m_ctx.at(index)->info.online;
+}
+
+int DataCollector::failureCount(int index) const
+{
+    if (index < 0 || index >= m_ctx.size())
+        return 0;
+    return m_ctx.at(index)->failCount;
+}
+
 // ---------------------------------------------------------------------------
 // private slots
 // ---------------------------------------------------------------------------
 
 void DataCollector::onConnectionChanged(DeviceContext *ctx, bool connected)
 {
+    if (connected)
+        ctx->lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
+
     const int idx = m_ctx.indexOf(ctx);
     if (idx >= 0) {
         m_devices[idx].online = connected;
@@ -217,7 +235,14 @@ void DataCollector::onConnectionChanged(DeviceContext *ctx, bool connected)
 
 void DataCollector::onPollTick()
 {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+
     for (DeviceContext *ctx : std::as_const(m_ctx)) {
+        // Robust online detection: if no successful response for a while,
+        // mark the device offline regardless of transport error state.
+        if (ctx->lastSuccessMs > 0 && (now - ctx->lastSuccessMs) > kOfflineTimeoutMs)
+            setDeviceOnline(ctx, false);
+
         if (ctx->regCount <= 0)
             continue;
         if (ctx->info.connType == ConnType::Tcp) {
@@ -237,6 +262,11 @@ void DataCollector::onRegistersRead(DeviceContext *ctx,
     if (deviceIndex < 0)
         return;
 
+    // A successful read means the device is alive — reset failure counter.
+    ctx->failCount = 0;
+    ctx->lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
+    setDeviceOnline(ctx, true);
+
     const auto rawValues = unit.values();
     const auto &channels = ctx->info.channels;
 
@@ -252,4 +282,35 @@ void DataCollector::onRegistersRead(DeviceContext *ctx,
         m_cache->updateValue(deviceIndex, regAddr, real);
         m_alarms->checkValue(deviceIndex, *it, real);
     }
+}
+
+void DataCollector::onCommError(DeviceContext *ctx, const QString &msg)
+{
+    Q_UNUSED(msg)
+    ctx->failCount++;
+
+    // After several consecutive failures the device is considered offline.
+    // This is how serial (and dead-TCP-peer) links are detected — there is no
+    // physical "disconnect" event on RS232/485.
+    if (ctx->failCount >= kOfflineThreshold)
+        setDeviceOnline(ctx, false);
+}
+
+void DataCollector::setDeviceOnline(DeviceContext *ctx, bool online)
+{
+    const int idx = m_ctx.indexOf(ctx);
+    if (idx < 0)
+        return;
+
+    const bool wasOnline = m_devices.at(idx).online;
+    if (wasOnline == online)
+        return;
+
+    m_devices[idx].online = online;
+    ctx->info.online = online;
+    emit deviceConnectionChanged(idx, online);
+
+    emit statusMessage(online
+        ? tr("%1 恢复在线").arg(ctx->info.name)
+        : tr("%1 已离线（无响应）").arg(ctx->info.name));
 }
