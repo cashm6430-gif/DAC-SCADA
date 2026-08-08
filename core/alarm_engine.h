@@ -9,6 +9,7 @@
 
 /// Monitors channel values against their upper/lower limits and emits
 /// alarm events when a channel crosses a threshold (and when it recovers).
+/// State is tracked per (deviceIndex, regAddr).
 class AlarmEngine : public QObject
 {
     Q_OBJECT
@@ -16,9 +17,8 @@ class AlarmEngine : public QObject
 public:
     explicit AlarmEngine(QObject *parent = nullptr);
 
-    /// Evaluate a freshly-sampled channel value. Emits newAlarm() when the
-    /// state transitions (normal → high/low, or high/low → normal).
-    void checkValue(const Channel &ch, double value);
+    /// Evaluate a freshly-sampled value from a device/channel.
+    void checkValue(int deviceIndex, const Channel &ch, double value);
 
     const QVector<AlarmRecord> &history() const { return m_history; }
 
@@ -28,10 +28,10 @@ signals:
 private:
     enum class Status { Normal, High, Low };
 
-    void raise(const Channel &ch, const QString &message,
+    void raise(int deviceIndex, const QString &message,
                AlarmRecord::Severity severity);
 
-    QHash<int, Status> m_states;   // regAddr → last status
+    QHash<int, QHash<int, Status>> m_states;  // deviceIndex → (regAddr → status)
     QVector<AlarmRecord> m_history;
 };
 

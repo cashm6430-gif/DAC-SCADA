@@ -10,7 +10,7 @@
 class DataCache;
 
 // ---------------------------------------------------------------------------
-// Table model exposed to the UI — shows one row per monitored channel.
+// Table model exposed to the UI — shows the *current device's* channels.
 // ---------------------------------------------------------------------------
 
 class DataCacheModel : public QAbstractTableModel
@@ -34,7 +34,6 @@ public:
     QVariant headerData(int section, Qt::Orientation orientation,
                         int role) const override;
 
-    /// Called by DataCache whenever the value set changes.
     void notifyRowsReset();
 
 private:
@@ -42,7 +41,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Main cache — single source of truth for current channel values.
+// Main cache — holds values for ALL devices, exposes the current device.
 // ---------------------------------------------------------------------------
 
 class DataCache : public QObject
@@ -52,29 +51,35 @@ class DataCache : public QObject
 public:
     explicit DataCache(QObject *parent = nullptr);
 
-    /// Install the channel configuration (from DataCollector).
-    void setChannels(const QList<Channel> &channels);
-    const QList<Channel> &channels() const { return m_channels; }
+    /// Install the full device + channel configuration.
+    void setDevices(const QList<DeviceInfo> &devices);
 
-    /// Current real value of a register, or 0 if unknown.
-    double value(int regAddr) const;
-    bool   hasValue(int regAddr) const;
+    /// Switch which device the table/curve display.
+    void setCurrentDevice(int deviceIndex);
+    int  currentDevice() const { return m_currentDevice; }
+
+    const QList<DeviceInfo> &devices() const { return m_devices; }
+    const QList<Channel> &currentChannels() const;
+
+    /// Current real value of a register on a specific device.
+    double value(int deviceIndex, int regAddr) const;
+    bool   hasValue(int deviceIndex, int regAddr) const;
 
     DataCacheModel *tableModel() const { return m_model; }
 
 public slots:
-    /// Update a channel value (already converted to the real value).
-    void updateValue(int regAddr, double value);
+    void updateValue(int deviceIndex, int regAddr, double value);
 
 signals:
-    void valueChanged(int regAddr, double value);
-    /// Emitted when the channel configuration is (re)installed.
-    void channelsChanged();
+    void devicesChanged();
+    void currentDeviceChanged(int deviceIndex);
+    void valueChanged(int deviceIndex, int regAddr, double value);
 
 private:
-    QList<Channel>   m_channels;
-    QHash<int, double> m_values;
-    DataCacheModel   *m_model;
+    QList<DeviceInfo> m_devices;
+    QHash<int, QHash<int, double>> m_values;  // deviceIndex → (regAddr → value)
+    int  m_currentDevice = 0;
+    DataCacheModel *m_model;
 };
 
 #endif // DATA_CACHE_H

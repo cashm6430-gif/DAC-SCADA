@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QList>
+#include <QVector>
 #include <QTimer>
 #include <QModbusDataUnit>
 #include "types.h"
@@ -11,57 +12,67 @@ class ModbusTcpClient;
 class DataCache;
 class AlarmEngine;
 
-/// Orchestrates the acquisition pipeline:
+/// Orchestrates the acquisition pipeline for MULTIPLE devices:
 ///
-///   ModbusTcpClient ──read──► DataCollector ──raw→real──► DataCache
-///                                                    └────► AlarmEngine
+///   for each device:
+///     ModbusTcpClient ──read──► DataCollector ──raw→real──► DataCache
+///                                                       └────► AlarmEngine
 ///
-/// Loads device/channel configuration from JSON, connects to the PLC or
-/// simulator over Modbus TCP, polls holding registers on a timer, converts
-/// raw integers to real values (value = raw*scale + offset) and pushes them
-/// into the cache and alarm engine.
+/// Loads device/channel configuration from JSON, connects to every PLC or
+/// simulator over Modbus TCP, polls all connected devices on a shared timer,
+/// converts raw integers to real values and pushes them into the cache and
+/// alarm engine. All devices are polled concurrently; the UI switches which
+/// one is displayed.
 class DataCollector : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit DataCollector(ModbusTcpClient *client,
-                           DataCache *cache,
+    explicit DataCollector(DataCache *cache,
                            AlarmEngine *alarms,
                            QObject *parent = nullptr);
+    ~DataCollector() override;
 
-    /// Load devices.json. Returns false on parse failure.
+    /// Load devices.json (multi-device). Returns false on parse failure.
     bool loadConfig(const QString &jsonPath);
 
     // ---- control ----
-    void connectDevice();          // connect TCP to the configured host
-    void disconnectDevice();
+    void connectAll();
+    void disconnectAll();
     void startPolling(int intervalMs = 100);
     void stopPolling();
 
     // ---- config access ----
-    const DeviceInfo &device() const { return m_device; }
-    const QList<Channel> &channels() const { return m_channels; }
+    const QList<DeviceInfo> &devices() const { return m_devices; }
+    int deviceCount() const { return m_devices.size(); }
+
+    /// Whether the TCP+Modbus connection for device \a index is established.
+    bool isDeviceConnected(int index) const;
+    bool pollingActive() const { return m_pollTimer.isActive(); }
 
 signals:
-    void connectionStateChanged(bool connected);
+    void deviceConnectionChanged(int deviceIndex, bool connected);
     void statusMessage(const QString &message);
+
+private:
+    struct DeviceContext {
+        DeviceInfo info;
+        ModbusTcpClient *client = nullptr;
+        int startAddr = 0;
+        int regCount  = 0;
+    };
+
+    DataCache   *m_cache;
+    AlarmEngine *m_alarms;
+
+    QList<DeviceInfo>  m_devices;
+    QVector<DeviceContext*> m_ctx;
+    QTimer m_pollTimer;
 
 private slots:
     void onPollTick();
-    void onRegistersRead(const QModbusDataUnit &unit);
-    void onConnectionChanged(bool connected);
-
-private:
-    ModbusTcpClient *m_client;
-    DataCache       *m_cache;
-    AlarmEngine     *m_alarms;
-
-    QTimer m_pollTimer;
-    DeviceInfo   m_device;
-    QList<Channel> m_channels;
-    int m_startAddr = 0;
-    int m_regCount  = 0;
+    void onRegistersRead(DeviceContext *ctx, const QModbusDataUnit &unit);
+    void onConnectionChanged(DeviceContext *ctx, bool connected);
 };
 
 #endif // DATA_COLLECTOR_H

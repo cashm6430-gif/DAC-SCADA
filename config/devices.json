@@ -3,49 +3,98 @@
     {
       "deviceName": "温控PLC-1",
       "ip": "127.0.0.1",
-      "port": 1502
-    }
-  ],
-  "channels": [
-    {
-      "regAddr": 0,
-      "name": "温度",
-      "unit": "°C",
-      "scale": 0.01,
-      "offset": 0.0,
-      "upperLimit": 35.0,
-      "lowerLimit": 5.0,
-      "color": "#FF0000"
+      "port": 1502,
+      "unitId": 1,
+      "channels": [
+        {
+          "regAddr": 0,
+          "name": "温度",
+          "unit": "°C",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 35.0,
+          "lowerLimit": 5.0,
+          "color": "#FF0000"
+        },
+        {
+          "regAddr": 1,
+          "name": "湿度",
+          "unit": "%",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 65.0,
+          "lowerLimit": 20.0,
+          "color": "#0000FF"
+        },
+        {
+          "regAddr": 2,
+          "name": "压力",
+          "unit": "kPa",
+          "scale": 0.001,
+          "offset": 0.0,
+          "upperLimit": 14.0,
+          "lowerLimit": 4.0,
+          "color": "#00AA00"
+        },
+        {
+          "regAddr": 3,
+          "name": "流量",
+          "unit": "m³/h",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 3.5,
+          "lowerLimit": 1.5,
+          "color": "#FF8800"
+        }
+      ]
     },
     {
-      "regAddr": 1,
-      "name": "湿度",
-      "unit": "%",
-      "scale": 0.01,
-      "offset": 0.0,
-      "upperLimit": 65.0,
-      "lowerLimit": 20.0,
-      "color": "#0000FF"
-    },
-    {
-      "regAddr": 2,
-      "name": "压力",
-      "unit": "kPa",
-      "scale": 0.001,
-      "offset": 0.0,
-      "upperLimit": 14.0,
-      "lowerLimit": 4.0,
-      "color": "#00AA00"
-    },
-    {
-      "regAddr": 3,
-      "name": "流量",
-      "unit": "m³/h",
-      "scale": 0.01,
-      "offset": 0.0,
-      "upperLimit": 3.5,
-      "lowerLimit": 1.5,
-      "color": "#FF8800"
+      "deviceName": "电机PLC-2",
+      "ip": "127.0.0.1",
+      "port": 1503,
+      "unitId": 1,
+      "channels": [
+        {
+          "regAddr": 0,
+          "name": "电流",
+          "unit": "A",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 60.0,
+          "lowerLimit": 20.0,
+          "color": "#FF00FF"
+        },
+        {
+          "regAddr": 1,
+          "name": "转速",
+          "unit": "rpm",
+          "scale": 0.1,
+          "offset": 0.0,
+          "upperLimit": 650.0,
+          "lowerLimit": 200.0,
+          "color": "#00FFFF"
+        },
+        {
+          "regAddr": 2,
+          "name": "扭矩",
+          "unit": "Nm",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 60.0,
+          "lowerLimit": 20.0,
+          "color": "#888800"
+        },
+        {
+          "regAddr": 3,
+          "name": "振动",
+          "unit": "mm/s",
+          "scale": 0.001,
+          "offset": 0.0,
+          "upperLimit": 6.0,
+          "lowerLimit": 2.0,
+          "color": "#0088FF"
+        }
+      ]
     }
   ]
 }

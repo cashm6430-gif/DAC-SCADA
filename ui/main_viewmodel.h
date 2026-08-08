@@ -5,7 +5,6 @@
 #include <QVector>
 #include "core/types.h"
 
-class ModbusTcpClient;
 class DataCollector;
 class DataCache;
 class DataCacheModel;
@@ -27,23 +26,24 @@ public:
 
     DataCache  *cache() const { return m_cache; }
     AlarmEngine *alarmEngine() const { return m_alarms; }
+    DataCollector *collector() const { return m_collector; }
 
     // ---- Commands ----
     void loadConfig(const QString &jsonPath);
     void connectToDevice();
     void disconnectFromDevice();
+    void switchDevice(int deviceIndex);
 
 signals:
-    void connectedChanged(bool connected);
+    void deviceConnectionChanged(int deviceIndex, bool connected);
     void statusTextChanged(const QString &message);
     void newAlarm(const AlarmRecord &record);
 
 private:
-    ModbusTcpClient *m_client    = nullptr;
-    DataCollector   *m_collector = nullptr;
-    DataCache       *m_cache     = nullptr;
-    DataCacheModel  *m_model     = nullptr;
-    AlarmEngine     *m_alarms    = nullptr;
+    DataCollector  *m_collector = nullptr;
+    DataCache      *m_cache     = nullptr;
+    DataCacheModel *m_model     = nullptr;
+    AlarmEngine    *m_alarms    = nullptr;
 };
 
 #endif // MAIN_VIEWMODEL_H

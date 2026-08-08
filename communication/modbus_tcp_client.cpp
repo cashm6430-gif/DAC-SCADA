@@ -121,6 +121,8 @@ void ModbusTcpClient::writeSingleRegister(int regAddr, quint16 value)
 void ModbusTcpClient::onStateChanged(QModbusDevice::State state)
 {
     const bool connected = (state == QModbusDevice::ConnectedState);
+    qInfo() << "ModbusTcpClient::onStateChanged" << static_cast<int>(state)
+            << "connected=" << connected << m_host << m_port;
     emit connectionStateChanged(connected);
 }
 

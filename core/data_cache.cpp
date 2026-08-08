@@ -14,7 +14,7 @@ DataCacheModel::DataCacheModel(DataCache *cache, QObject *parent)
 
 int DataCacheModel::rowCount(const QModelIndex &) const
 {
-    return m_cache->channels().size();
+    return m_cache->currentChannels().size();
 }
 
 int DataCacheModel::columnCount(const QModelIndex &) const
@@ -24,28 +24,28 @@ int DataCacheModel::columnCount(const QModelIndex &) const
 
 QVariant DataCacheModel::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid() || index.row() >= m_cache->channels().size())
+    const auto &channels = m_cache->currentChannels();
+    if (!index.isValid() || index.row() >= channels.size())
         return {};
 
-    const Channel &ch = m_cache->channels().at(index.row());
+    const Channel &ch = channels.at(index.row());
+    const int devIdx = m_cache->currentDevice();
 
     if (role == Qt::DisplayRole || role == Qt::EditRole) {
         switch (index.column()) {
         case ColName:
             return ch.name;
         case ColValue: {
-            const bool has = m_cache->hasValue(ch.regAddr);
-            const double v = m_cache->value(ch.regAddr);
-            if (has)
-                return QString::number(v, 'f', 2);
+            if (m_cache->hasValue(devIdx, ch.regAddr))
+                return QString::number(m_cache->value(devIdx, ch.regAddr), 'f', 2);
             return QStringLiteral("--");
         }
         case ColUnit:
             return ch.unit;
         case ColStatus: {
-            if (!m_cache->hasValue(ch.regAddr))
+            if (!m_cache->hasValue(devIdx, ch.regAddr))
                 return QStringLiteral("无数据");
-            const double v = m_cache->value(ch.regAddr);
+            const double v = m_cache->value(devIdx, ch.regAddr);
             if (v > ch.upperLimit)
                 return QStringLiteral("超上限");
             if (v < ch.lowerLimit)
@@ -100,30 +100,58 @@ DataCache::DataCache(QObject *parent)
     , m_model(new DataCacheModel(this, this))
 {}
 
-void DataCache::setChannels(const QList<Channel> &channels)
+void DataCache::setDevices(const QList<DeviceInfo> &devices)
 {
-    m_channels = channels;
+    m_devices = devices;
     m_values.clear();
+    if (m_currentDevice >= m_devices.size())
+        m_currentDevice = 0;
+
     m_model->notifyRowsReset();
-    emit channelsChanged();
+    emit devicesChanged();
 }
 
-double DataCache::value(int regAddr) const
+void DataCache::setCurrentDevice(int deviceIndex)
 {
-    return m_values.value(regAddr, 0.0);
+    if (deviceIndex == m_currentDevice)
+        return;
+    if (deviceIndex < 0 || deviceIndex >= m_devices.size())
+        return;
+
+    m_currentDevice = deviceIndex;
+    m_model->notifyRowsReset();
+    emit currentDeviceChanged(m_currentDevice);
 }
 
-bool DataCache::hasValue(int regAddr) const
+const QList<Channel> &DataCache::currentChannels() const
 {
-    return m_values.contains(regAddr);
+    static const QList<Channel> empty;
+    if (m_currentDevice < 0 || m_currentDevice >= m_devices.size())
+        return empty;
+    return m_devices.at(m_currentDevice).channels;
 }
 
-void DataCache::updateValue(int regAddr, double value)
+double DataCache::value(int deviceIndex, int regAddr) const
 {
-    const bool changed = (m_values.value(regAddr) != value);
-    m_values[regAddr] = value;
-    emit valueChanged(regAddr, value);
+    const auto it = m_values.constFind(deviceIndex);
+    if (it == m_values.constEnd())
+        return 0.0;
+    return it.value().value(regAddr, 0.0);
+}
 
-    if (changed)
+bool DataCache::hasValue(int deviceIndex, int regAddr) const
+{
+    const auto it = m_values.constFind(deviceIndex);
+    if (it == m_values.constEnd())
+        return false;
+    return it.value().contains(regAddr);
+}
+
+void DataCache::updateValue(int deviceIndex, int regAddr, double value)
+{
+    m_values[deviceIndex][regAddr] = value;
+    emit valueChanged(deviceIndex, regAddr, value);
+
+    if (deviceIndex == m_currentDevice)
         m_model->notifyRowsReset();
 }

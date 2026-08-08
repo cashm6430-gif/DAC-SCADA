@@ -25,6 +25,8 @@ struct DeviceInfo {
     QString ip;
     quint16 port = 1502;
     bool    online = false;
+    /// Monitored channels owned by this device.
+    QList<Channel> channels;
 };
 
 /// Key uniquely identifying a data point: (device, register).

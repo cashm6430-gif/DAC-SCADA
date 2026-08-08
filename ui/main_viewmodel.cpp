@@ -2,10 +2,8 @@
 #include "core/data_cache.h"
 #include "core/alarm_engine.h"
 #include "core/data_collector.h"
-#include "communication/modbus_tcp_client.h"
 
 #include <QCoreApplication>
-#include <QDir>
 
 // ---------------------------------------------------------------------------
 // construction / destruction
@@ -14,15 +12,14 @@
 MainViewModel::MainViewModel(QObject *parent)
     : QObject(parent)
 {
-    m_client    = new ModbusTcpClient(this);
     m_cache     = new DataCache(this);
     m_alarms    = new AlarmEngine(this);
-    m_collector = new DataCollector(m_client, m_cache, m_alarms, this);
+    m_collector = new DataCollector(m_cache, m_alarms, this);
     m_model     = m_cache->tableModel();
 
     // forward collector status + alarms to the View
-    connect(m_collector, &DataCollector::connectionStateChanged,
-            this, &MainViewModel::connectedChanged);
+    connect(m_collector, &DataCollector::deviceConnectionChanged,
+            this, &MainViewModel::deviceConnectionChanged);
     connect(m_collector, &DataCollector::statusMessage,
             this, &MainViewModel::statusTextChanged);
     connect(m_alarms, &AlarmEngine::newAlarm,
@@ -51,8 +48,6 @@ const QVector<AlarmRecord> &MainViewModel::alarms() const
 
 void MainViewModel::loadConfig(const QString &jsonPath)
 {
-    // Try a few candidate locations so it works both in the repo and after
-    // deployment (where config/ sits next to the executable).
     QStringList candidates;
     candidates << jsonPath
                << QCoreApplication::applicationDirPath() + "/config/devices.json"
@@ -67,11 +62,15 @@ void MainViewModel::loadConfig(const QString &jsonPath)
 
 void MainViewModel::connectToDevice()
 {
-    m_collector->connectDevice();
+    m_collector->connectAll();
 }
 
 void MainViewModel::disconnectFromDevice()
 {
-    m_collector->disconnectDevice();
-    emit connectedChanged(false);
+    m_collector->disconnectAll();
+}
+
+void MainViewModel::switchDevice(int deviceIndex)
+{
+    m_cache->setCurrentDevice(deviceIndex);
 }

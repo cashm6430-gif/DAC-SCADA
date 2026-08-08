@@ -7,6 +7,7 @@ class MainViewModel;
 class SimulatedModbusServer;
 class CurvePanel;
 class QTreeWidget;
+class QTreeWidgetItem;
 class QTableView;
 class QTableWidget;
 class QLabel;
@@ -43,14 +44,17 @@ private:
                         const QString &message);
 
     MainViewModel         *m_viewModel = nullptr;
-    SimulatedModbusServer *m_simulator = nullptr;
+    SimulatedModbusServer *m_simulator  = nullptr;   // 设备1 @ 1502
+    SimulatedModbusServer *m_simulator2 = nullptr;   // 设备2 @ 1503
 
     // --- UI widgets (kept as members for binding) ---
-    QTreeWidget  *m_deviceTree  = nullptr;   // 硬件列表
-    QTableView   *m_dataTable   = nullptr;   // 通道数据
-    CurvePanel   *m_curvePanel  = nullptr;   // 实时曲线
-    QTableWidget *m_alarmTable  = nullptr;   // 报警列表
-    QLabel       *m_statusLabel = nullptr;   // 连接状态
+    QTreeWidget        *m_deviceTree  = nullptr;   // 硬件列表
+    QList<QTreeWidgetItem*> m_deviceItems;         // 设备树行
+    QTableView         *m_dataTable   = nullptr;   // 通道数据
+    QLabel             *m_tableTitle  = nullptr;   // 表格标题（含当前设备名）
+    CurvePanel         *m_curvePanel  = nullptr;   // 实时曲线
+    QTableWidget       *m_alarmTable  = nullptr;   // 报警列表
+    QLabel             *m_statusLabel = nullptr;   // 连接状态
 };
 
 #endif // MAINWINDOW_H
