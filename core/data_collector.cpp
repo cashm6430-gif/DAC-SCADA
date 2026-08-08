@@ -214,22 +214,23 @@ int DataCollector::failureCount(int index) const
 
 void DataCollector::onConnectionChanged(DeviceContext *ctx, bool connected)
 {
-    if (connected)
-        ctx->lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
-
     const int idx = m_ctx.indexOf(ctx);
-    if (idx >= 0) {
-        m_devices[idx].online = connected;
-        ctx->info.online = connected;
-        emit deviceConnectionChanged(idx, connected);
-    }
 
     if (connected) {
-        emit statusMessage(tr("%1 已连接 (unit %2)")
+        // Link is up, but "online" requires an actual data response —
+        // record a grace-period start so we don't instantly time out.
+        ctx->lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
+        if (idx >= 0)
+            emit deviceConnectionChanged(idx, true);
+        emit statusMessage(tr("%1 链路已建立 (unit %2)")
                                .arg(ctx->info.name).arg(ctx->info.address));
-        startPolling(100);   // 至少一个设备在线即开始轮询所有设备
+        startPolling(100);   // at least one link is up → poll everyone
     } else {
-        emit statusMessage(tr("%1 已断开").arg(ctx->info.name));
+        ctx->lastSuccessMs = 0;
+        setDeviceOnline(ctx, false);   // link dropped → certainly offline
+        if (idx >= 0)
+            emit deviceConnectionChanged(idx, false);
+        emit statusMessage(tr("%1 链路已断开").arg(ctx->info.name));
     }
 }
 
@@ -308,7 +309,7 @@ void DataCollector::setDeviceOnline(DeviceContext *ctx, bool online)
 
     m_devices[idx].online = online;
     ctx->info.online = online;
-    emit deviceConnectionChanged(idx, online);
+    emit deviceOnlineChanged(idx, online);
 
     emit statusMessage(online
         ? tr("%1 恢复在线").arg(ctx->info.name)

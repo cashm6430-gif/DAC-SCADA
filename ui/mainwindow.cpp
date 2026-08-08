@@ -235,11 +235,11 @@ void MainWindow::bindToViewModel()
     });
 
     // ---- 设备连接状态 → 硬件列表状态列 ----
+    // ---- 链路状态 / 在线状态 → 设备树三态刷新 ----
     connect(m_viewModel, &MainViewModel::deviceConnectionChanged,
-            this, [this](int idx, bool connected) {
-        if (idx >= 0 && idx < m_deviceItems.size())
-            m_deviceItems.at(idx)->setText(2, connected ? tr("在线") : tr("离线"));
-    });
+            this, [this](int, bool) { updateDeviceStatus(); });
+    connect(m_viewModel, &MainViewModel::deviceOnlineChanged,
+            this, [this](int, bool) { updateDeviceStatus(); });
 
     // ---- 当前设备切换 → 表格标题 + 曲线重建 ----
     connect(cache, &DataCache::currentDeviceChanged, this, [this](int idx) {
@@ -252,17 +252,19 @@ void MainWindow::bindToViewModel()
             m_curvePanel->setChannels(m_viewModel->cache()->currentChannels());
     });
 
-    // ---- 连接状态 → 状态栏 ----
+    // ---- 连接状态 → 状态栏（任一链路已建立即显示"已连接"） ----
     connect(m_viewModel, &MainViewModel::deviceConnectionChanged,
             this, [this](int, bool) {
-        // 任意设备在线即显示"已连接"
-        bool anyOnline = false;
+        bool anyConnected = false;
         const auto &devices = m_viewModel->cache()->devices();
-        for (const auto &d : devices) {
-            if (d.online) { anyOnline = true; break; }
+        for (int i = 0; i < devices.size(); ++i) {
+            if (m_viewModel->collector()->isDeviceConnected(i)) {
+                anyConnected = true;
+                break;
+            }
         }
         if (m_statusLabel)
-            m_statusLabel->setText(anyOnline ? tr("已连接") : tr("未连接"));
+            m_statusLabel->setText(anyConnected ? tr("已连接") : tr("未连接"));
     });
 
     // ---- 状态消息 → 状态栏 ----
@@ -301,6 +303,33 @@ void MainWindow::bindToViewModel()
                     m_curvePanel->addPoint(regAddr, value);
                 }
             });
+}
+
+void MainWindow::updateDeviceStatus()
+{
+    for (int i = 0; i < m_deviceItems.size(); ++i) {
+        QTreeWidgetItem *item = m_deviceItems.at(i);
+        if (!item)
+            continue;
+
+        const bool connected = m_viewModel->collector()->isDeviceConnected(i);
+        const bool online    = m_viewModel->collector()->isDeviceOnline(i);
+
+        QString text;
+        QColor  color;
+        if (online) {
+            text = tr("在线");
+            color = QColor(0, 150, 0);
+        } else if (connected) {
+            text = tr("已连接");
+            color = QColor(200, 160, 0);
+        } else {
+            text = tr("离线");
+            color = Qt::gray;
+        }
+        item->setText(2, text);
+        item->setForeground(2, color);
+    }
 }
 
 void MainWindow::appendAlarmRow(const QString &time, const QString &severity,

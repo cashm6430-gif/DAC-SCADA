@@ -56,7 +56,10 @@ public:
     bool pollingActive() const { return m_pollTimer.isActive(); }
 
 signals:
+    /// Transport link state (TCP connected / serial port opened).
     void deviceConnectionChanged(int deviceIndex, bool connected);
+    /// Data-alive state (received a response recently).
+    void deviceOnlineChanged(int deviceIndex, bool online);
     void statusMessage(const QString &message);
 
 private:

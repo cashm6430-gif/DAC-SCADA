@@ -36,6 +36,7 @@ public:
 
 signals:
     void deviceConnectionChanged(int deviceIndex, bool connected);
+    void deviceOnlineChanged(int deviceIndex, bool online);
     void statusTextChanged(const QString &message);
     void newAlarm(const AlarmRecord &record);
 

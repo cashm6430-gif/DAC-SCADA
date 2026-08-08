@@ -20,6 +20,8 @@ MainViewModel::MainViewModel(QObject *parent)
     // forward collector status + alarms to the View
     connect(m_collector, &DataCollector::deviceConnectionChanged,
             this, &MainViewModel::deviceConnectionChanged);
+    connect(m_collector, &DataCollector::deviceOnlineChanged,
+            this, &MainViewModel::deviceOnlineChanged);
     connect(m_collector, &DataCollector::statusMessage,
             this, &MainViewModel::statusTextChanged);
     connect(m_alarms, &AlarmEngine::newAlarm,

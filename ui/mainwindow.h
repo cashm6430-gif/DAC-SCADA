@@ -43,6 +43,8 @@ private:
     void createStatusBar();
     void appendAlarmRow(const QString &time, const QString &severity,
                         const QString &message);
+    /// Refresh all device-tree rows from the collector's live state.
+    void updateDeviceStatus();
 
     MainViewModel         *m_viewModel = nullptr;
     SimulatedModbusServer *m_simulator  = nullptr;   // TCP 设备1 @ 1502
