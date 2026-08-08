@@ -9,6 +9,7 @@
 #include "types.h"
 
 class ModbusTcpClient;
+class ModbusSerialClient;
 class DataCache;
 class AlarmEngine;
 
@@ -57,7 +58,8 @@ signals:
 private:
     struct DeviceContext {
         DeviceInfo info;
-        ModbusTcpClient *client = nullptr;
+        ModbusTcpClient    *tcpClient    = nullptr;
+        ModbusSerialClient *serialClient = nullptr;
         int startAddr = 0;
         int regCount  = 0;
     };
@@ -68,6 +70,7 @@ private:
     QList<DeviceInfo>  m_devices;
     QVector<DeviceContext*> m_ctx;
     QTimer m_pollTimer;
+    QHash<QString, ModbusSerialClient*> m_serialClients;  // portName → client
 
 private slots:
     void onPollTick();

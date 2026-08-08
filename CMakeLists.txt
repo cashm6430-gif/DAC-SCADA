@@ -51,6 +51,8 @@ set(SOURCES
     communication/modbus_rtu.cpp
     communication/modbus_tcp_client.h
     communication/modbus_tcp_client.cpp
+    communication/modbus_serial_client.h
+    communication/modbus_serial_client.cpp
     ui/mainwindow.h
     ui/mainwindow.cpp
     ui/main_viewmodel.h
@@ -72,6 +74,8 @@ set(SOURCES
     simulator/simulated_device.cpp
     simulator/simulated_modbus_server.h
     simulator/simulated_modbus_server.cpp
+    simulator/simulated_serial_server.h
+    simulator/simulated_serial_server.cpp
 )
 
 # ── Executable ────────────────────────────────────

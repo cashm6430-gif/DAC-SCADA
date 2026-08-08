@@ -1,6 +1,55 @@
 {
   "devices": [
     {
+      "deviceName": "泵站PLC-3",
+      "connType": "serial",
+      "serialPort": "COM5",
+      "baudRate": 9600,
+      "unitId": 1,
+      "channels": [
+        {
+          "regAddr": 0,
+          "name": "液位",
+          "unit": "m",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 66.0,
+          "lowerLimit": 18.0,
+          "color": "#FF6F00"
+        },
+        {
+          "regAddr": 1,
+          "name": "出口压力",
+          "unit": "MPa",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 33.0,
+          "lowerLimit": 12.0,
+          "color": "#7B68EE"
+        },
+        {
+          "regAddr": 2,
+          "name": "泵温",
+          "unit": "°C",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 11.0,
+          "lowerLimit": 4.0,
+          "color": "#CD5C5C"
+        },
+        {
+          "regAddr": 3,
+          "name": "流量",
+          "unit": "m³/h",
+          "scale": 0.01,
+          "offset": 0.0,
+          "upperLimit": 145.0,
+          "lowerLimit": 45.0,
+          "color": "#20B2AA"
+        }
+      ]
+    },
+    {
       "deviceName": "温控PLC-1",
       "ip": "127.0.0.1",
       "port": 1502,

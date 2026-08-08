@@ -2,6 +2,7 @@
 #include "main_viewmodel.h"
 #include "curve_panel.h"
 #include "simulator/simulated_modbus_server.h"
+#include "simulator/simulated_serial_server.h"
 #include "core/types.h"
 #include "core/data_cache.h"
 #include "core/data_collector.h"
@@ -34,6 +35,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_viewModel(new MainViewModel(this))
     , m_simulator(new SimulatedModbusServer(this))
     , m_simulator2(new SimulatedModbusServer(this))
+    , m_serialSim(new SimulatedSerialServer(this))
 {
     setupUi();
     bindToViewModel();
@@ -169,31 +171,39 @@ bool MainWindow::startSimulatorAutomatically()
 {
     const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
     const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
-    return ok1 && ok2;
+    const bool ok3 = m_serialSim->start(QStringLiteral("COM6"), 9600);
+    return ok1 && ok2 && ok3;
 }
 
 void MainWindow::toggleSimulator()
 {
     auto *action = findChild<QAction *>("simulatorToggle");
-    const bool wasRunning = m_simulator->isListening() || m_simulator2->isListening();
+    const bool wasRunning = m_simulator->isListening()
+        || m_simulator2->isListening() || m_serialSim->isListening();
 
     if (wasRunning) {
         m_simulator->stop();
         m_simulator2->stop();
+        m_serialSim->stop();
         statusBar()->showMessage(tr("模拟下位机已停止"), 3000);
         if (action)
             action->setText(tr("&Start Simulated PLC"));
     } else {
         const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
         const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
-        if (ok1 || ok2) {
+        const bool ok3 = m_serialSim->start(QStringLiteral("COM6"), 9600);
+        if (ok1 || ok2 || ok3) {
             statusBar()->showMessage(
-                tr("模拟下位机运行中: 127.0.0.1:1502 / :1503 (Modbus TCP)"), 5000);
+                tr("模拟下位机运行中: TCP 1502/1503 + 串口 COM6"), 5000);
             if (action)
                 action->setText(tr("&Stop Simulated PLC"));
+            if (!ok3)
+                QMessageBox::warning(this, tr("Simulator"),
+                    tr("串口模拟器未启动（COM6 可能不存在）。\n"
+                       "需要 com0com 虚拟串口对：COM5<->COM6"));
         } else {
             QMessageBox::warning(this, tr("Simulator"),
-                                 tr("启动模拟下位机失败。\n端口 1502/1503 可能被占用。"));
+                                 tr("启动模拟下位机失败。"));
         }
     }
 }
@@ -308,19 +318,21 @@ void MainWindow::runSelfTest(const QString &outPath)
 {
     const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
     const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
+    const bool ok3 = m_serialSim->start(QStringLiteral("COM6"), 9600);
 
     // 给模拟器一点时间完全就绪，再连接
-    QTimer::singleShot(500, this, [this, outPath, ok1, ok2]() {
+    QTimer::singleShot(500, this, [this, outPath, ok1, ok2, ok3]() {
         m_viewModel->connectToDevice();
 
-    QTimer::singleShot(3000, this, [this, outPath, ok1, ok2]() {
+    QTimer::singleShot(3000, this, [this, outPath, ok1, ok2, ok3]() {
         QFile file(outPath);
         if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             QTextStream ts(&file);
             ts << "DAC-SCADA self-test\n";
             ts << "==================\n";
             ts << "simulator1502: " << (ok1 ? "OK" : "FAIL")
-               << ", simulator1503: " << (ok2 ? "OK" : "FAIL") << "\n";
+               << ", simulator1503: " << (ok2 ? "OK" : "FAIL")
+               << ", serialCOM6: " << (ok3 ? "OK" : "FAIL") << "\n";
             ts << "pollingActive: "
                << (m_viewModel->collector()->pollingActive() ? "yes" : "no") << "\n";
             auto *cache = m_viewModel->cache();

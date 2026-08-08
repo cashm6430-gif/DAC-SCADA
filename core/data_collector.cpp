@@ -1,5 +1,6 @@
 #include "data_collector.h"
 #include "communication/modbus_tcp_client.h"
+#include "communication/modbus_serial_client.h"
 #include "core/data_cache.h"
 #include "core/alarm_engine.h"
 
@@ -57,9 +58,14 @@ bool DataCollector::loadConfig(const QString &jsonPath)
 
         DeviceInfo dev;
         dev.name    = d.value("deviceName").toString(tr("PLC"));
-        dev.ip      = d.value("ip").toString(QStringLiteral("127.0.0.1"));
-        dev.port    = static_cast<quint16>(d.value("port").toInt(1502));
         dev.address = static_cast<qint16>(d.value("unitId").toInt(1));
+        dev.connType = (d.value("connType").toString(QStringLiteral("tcp")).compare(
+                            QStringLiteral("serial"), Qt::CaseInsensitive) == 0)
+                           ? ConnType::Serial : ConnType::Tcp;
+        dev.ip        = d.value("ip").toString(QStringLiteral("127.0.0.1"));
+        dev.port      = static_cast<quint16>(d.value("port").toInt(502));
+        dev.serialPort = d.value("serialPort").toString();
+        dev.baudRate   = d.value("baudRate").toInt(9600);
 
         // channels of this device
         const QJsonArray chArr = d.value("channels").toArray();
@@ -108,26 +114,44 @@ void DataCollector::connectAll()
     for (int i = 0; i < m_ctx.size(); ++i) {
         DeviceContext *ctx = m_ctx.at(i);
 
-        ctx->client = new ModbusTcpClient(this);
-        ctx->client->setObjectName(QStringLiteral("client_%1").arg(i));
+        if (ctx->info.connType == ConnType::Tcp) {
+            auto *c = new ModbusTcpClient(this);
+            c->setObjectName(QStringLiteral("tcp_%1").arg(i));
+            connect(c, &ModbusTcpClient::connectionStateChanged,
+                    this, [this, ctx](bool connected) { onConnectionChanged(ctx, connected); });
+            connect(c, &ModbusTcpClient::registersRead,
+                    this, [this, ctx](const QModbusDataUnit &unit) { onRegistersRead(ctx, unit); });
+            connect(c, &ModbusTcpClient::communicationError,
+                    this, [this](const QString &msg) { emit statusMessage(msg); });
+            ctx->tcpClient = c;
 
-        connect(ctx->client, &ModbusTcpClient::connectionStateChanged,
-                this, [this, ctx](bool connected) {
-                    onConnectionChanged(ctx, connected);
-                });
-        connect(ctx->client, &ModbusTcpClient::registersRead,
-                this, [this, ctx](const QModbusDataUnit &unit) {
-                    onRegistersRead(ctx, unit);
-                });
-        connect(ctx->client, &ModbusTcpClient::communicationError,
-                this, [this](const QString &msg) { emit statusMessage(msg); });
+            const bool ok = c->connectTo(ctx->info.ip, ctx->info.port, ctx->info.address);
+            emit statusMessage(ok
+                ? tr("正在连接 %1 (%2:%3) ...").arg(ctx->info.name, ctx->info.ip).arg(ctx->info.port)
+                : tr("连接 %1 失败").arg(ctx->info.name));
+        } else {
+            // Serial: reuse the same ModbusSerialClient for a shared COM port
+            ModbusSerialClient *c = m_serialClients.value(ctx->info.serialPort);
+            if (!c) {
+                c = new ModbusSerialClient(this);
+                c->setObjectName(QStringLiteral("serial_%1").arg(ctx->info.serialPort));
+                connect(c, &ModbusSerialClient::connectionStateChanged,
+                        this, [this, ctx](bool connected) { onConnectionChanged(ctx, connected); });
+                connect(c, &ModbusSerialClient::registersRead,
+                        this, [this, ctx](const QModbusDataUnit &unit) { onRegistersRead(ctx, unit); });
+                connect(c, &ModbusSerialClient::communicationError,
+                        this, [this](const QString &msg) { emit statusMessage(msg); });
+                m_serialClients.insert(ctx->info.serialPort, c);
+            }
+            ctx->serialClient = c;
 
-        const bool ok = ctx->client->connectTo(ctx->info.ip, ctx->info.port,
-                                               ctx->info.address);
-        emit statusMessage(ok
-            ? tr("正在连接 %1 (%2:%3) ...")
-                  .arg(ctx->info.name, ctx->info.ip).arg(ctx->info.port)
-            : tr("连接 %1 失败").arg(ctx->info.name));
+            const bool ok = c->connectTo(ctx->info.serialPort, ctx->info.baudRate,
+                                         ctx->info.address);
+            emit statusMessage(ok
+                ? tr("正在连接 %1 (%2 @%3) ...")
+                      .arg(ctx->info.name, ctx->info.serialPort).arg(ctx->info.baudRate)
+                : tr("打开串口 %1 失败").arg(ctx->info.serialPort));
+        }
     }
 }
 
@@ -135,12 +159,18 @@ void DataCollector::disconnectAll()
 {
     stopPolling();
     for (DeviceContext *ctx : std::as_const(m_ctx)) {
-        if (ctx->client) {
-            ctx->client->disconnectFrom();
-            ctx->client->deleteLater();
-            ctx->client = nullptr;
+        if (ctx->tcpClient) {
+            ctx->tcpClient->disconnectFrom();
+            ctx->tcpClient->deleteLater();
+            ctx->tcpClient = nullptr;
+        }
+        if (ctx->serialClient) {
+            ctx->serialClient->disconnectFrom();
+            ctx->serialClient->deleteLater();
+            ctx->serialClient = nullptr;
         }
     }
+    m_serialClients.clear();
 }
 
 void DataCollector::startPolling(int intervalMs)
@@ -158,7 +188,9 @@ bool DataCollector::isDeviceConnected(int index) const
     if (index < 0 || index >= m_ctx.size())
         return false;
     const DeviceContext *ctx = m_ctx.at(index);
-    return ctx->client && ctx->client->isConnected();
+    if (ctx->info.connType == ConnType::Tcp)
+        return ctx->tcpClient && ctx->tcpClient->isConnected();
+    return ctx->serialClient && ctx->serialClient->isConnected();
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +218,15 @@ void DataCollector::onConnectionChanged(DeviceContext *ctx, bool connected)
 void DataCollector::onPollTick()
 {
     for (DeviceContext *ctx : std::as_const(m_ctx)) {
-        if (ctx->client && ctx->client->isConnected() && ctx->regCount > 0)
-            ctx->client->readHoldingRegisters(ctx->startAddr, ctx->regCount);
+        if (ctx->regCount <= 0)
+            continue;
+        if (ctx->info.connType == ConnType::Tcp) {
+            if (ctx->tcpClient && ctx->tcpClient->isConnected())
+                ctx->tcpClient->readHoldingRegisters(ctx->startAddr, ctx->regCount);
+        } else {
+            if (ctx->serialClient && ctx->serialClient->isConnected())
+                ctx->serialClient->readHoldingRegisters(ctx->startAddr, ctx->regCount);
+        }
     }
 }
 

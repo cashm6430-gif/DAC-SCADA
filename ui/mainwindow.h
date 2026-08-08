@@ -5,6 +5,7 @@
 
 class MainViewModel;
 class SimulatedModbusServer;
+class SimulatedSerialServer;
 class CurvePanel;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -44,8 +45,9 @@ private:
                         const QString &message);
 
     MainViewModel         *m_viewModel = nullptr;
-    SimulatedModbusServer *m_simulator  = nullptr;   // 设备1 @ 1502
-    SimulatedModbusServer *m_simulator2 = nullptr;   // 设备2 @ 1503
+    SimulatedModbusServer *m_simulator  = nullptr;   // TCP 设备1 @ 1502
+    SimulatedModbusServer *m_simulator2 = nullptr;   // TCP 设备2 @ 1503
+    SimulatedSerialServer *m_serialSim  = nullptr;   // 串口设备 @ COM6
 
     // --- UI widgets (kept as members for binding) ---
     QTreeWidget        *m_deviceTree  = nullptr;   // 硬件列表
