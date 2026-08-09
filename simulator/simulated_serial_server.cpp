@@ -2,6 +2,7 @@
 #include "simulated_device.h"
 
 #include <QModbusRtuSerialServer>
+#include <QModbusServer>
 #include <QModbusDataUnit>
 #include <QSerialPort>
 #include <QVariant>
@@ -63,6 +64,21 @@ bool SimulatedSerialServer::start(const QString &portName, int baudRate)
     regMap.insert(QModbusDataUnit::HoldingRegisters, holdingRegs);
     m_server->setMap(regMap);
 
+    // Remote-control writes hold their value (waveform does not overwrite them).
+    m_overrides.clear();
+    connect(m_server, &QModbusServer::dataWritten, this,
+            [this](QModbusDataUnit::RegisterType table, int address, int size) {
+                if (m_pushing)
+                    return;   // our own waveform push — not a host write
+                if (table != QModbusDataUnit::HoldingRegisters)
+                    return;
+                for (int i = 0; i < size; ++i) {
+                    quint16 v = 0;
+                    m_server->data(table, static_cast<quint16>(address + i), &v);
+                    m_overrides.insert(address + i, v);
+                }
+            });
+
     m_device->start();
     qInfo() << "Simulated serial slave serving on" << portName << "@" << baudRate;
     return true;
@@ -97,7 +113,12 @@ void SimulatedSerialServer::pushRegistersToModbus()
 
     QModbusDataUnit unit(QModbusDataUnit::HoldingRegisters, 0,
                          m_device->registerCount());
-    for (int i = 0; i < m_device->registerCount(); ++i)
-        unit.setValue(i, m_device->rawRegister(i));
+    for (int i = 0; i < m_device->registerCount(); ++i) {
+        const auto it = m_overrides.constFind(i);
+        unit.setValue(i, it != m_overrides.constEnd()
+                             ? it.value() : m_device->rawRegister(i));
+    }
+    m_pushing = true;   // this setData() emits dataWritten() — don't self-record
     m_server->setData(unit);
+    m_pushing = false;
 }

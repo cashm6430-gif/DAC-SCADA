@@ -38,6 +38,7 @@ private slots:
 
 private:
     void sendReadRequest(int startAddr, int count);
+    void sendWriteRequest(int regAddr, quint16 value);
 
     QModbusTcpClient *m_client = nullptr;
     QString  m_host;
@@ -48,6 +49,12 @@ private:
     /// register data (it would feed the cache/alarm engine with the written
     /// value as if it were a fresh reading).
     bool m_pendingReadRequest = false;
+    /// A control write that arrived while another request was in flight is
+    /// stashed here and flushed by onReplyFinished, so the 10 Hz polling read
+    /// stream never silently drops a user's remote-write command.
+    bool     m_pendingWrite = false;
+    int      m_pendingWriteAddr = 0;
+    quint16  m_pendingWriteValue = 0;
 };
 
 #endif // MODBUS_TCP_CLIENT_H

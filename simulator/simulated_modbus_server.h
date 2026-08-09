@@ -2,6 +2,7 @@
 #define SIMULATED_MODBUS_SERVER_H
 
 #include <QObject>
+#include <QHash>
 
 class QModbusServer;
 class SimulatedDevice;
@@ -36,6 +37,14 @@ private:
 
     SimulatedDevice *m_device = nullptr;
     QModbusServer   *m_server = nullptr;
+    /// Registers the host has written via Modbus (remote control) — these keep
+    /// the written value instead of being overwritten by the waveform, so a
+    /// write is observable and demonstrable until the server restarts.
+    QHash<int, quint16> m_overrides;
+    /// Reentrancy guard: setData() emits dataWritten(), so the 50 ms push tick
+    /// must not be mistaken for a host write. Only writes that arrive while we
+    /// are NOT pushing are recorded as overrides.
+    bool m_pushing = false;
 };
 
 #endif // SIMULATED_MODBUS_SERVER_H

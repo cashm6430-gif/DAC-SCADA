@@ -45,6 +45,21 @@ public:
     /// Force a flush of the buffered rows. Returns false on a hard DB error.
     bool flush();
 
+    // ---- read-back API (worker thread; results delivered by queued signal) ----
+    /// Query stored samples for one device over [startMs, endMs]. The GUI
+    /// issues this via QMetaObject::invokeMethod; the result comes back on
+    /// samplesReady so a large SELECT never blocks the GUI thread.
+    Q_INVOKABLE void querySamples(int requestId, int deviceIndex,
+                                  const HistoryQuery &q);
+    /// Query stored alarm rows for one device over [startMs, endMs].
+    Q_INVOKABLE void queryAlarms(int requestId, int deviceIndex,
+                                 qint64 startMs, qint64 endMs);
+
+signals:
+    void samplesReady(int requestId, int deviceIndex, const HistoryResult &rows);
+    void alarmsReady(int requestId, int deviceIndex,
+                     const QVector<AlarmRecord> &alarms);
+
 private slots:
     void onFlushTimer();
 
@@ -77,6 +92,8 @@ private:
     static constexpr int kFlushThreshold = 512;
     /// Flush cadence even when the buffer stays below the threshold.
     static constexpr int kFlushIntervalMs = 1000;
+    /// Hard cap on rows returned by a single history query (bounded memory).
+    static constexpr int kMaxQueryRows = 200000;
 };
 
 #endif // HISTORY_STORE_H

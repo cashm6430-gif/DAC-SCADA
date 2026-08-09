@@ -71,6 +71,10 @@ set(SOURCES
     ui/main_viewmodel.cpp
     ui/curve_panel.h
     ui/curve_panel.cpp
+    ui/history_panel.h
+    ui/history_panel.cpp
+    ui/write_register_dialog.h
+    ui/write_register_dialog.cpp
     core/data_cache.h
     core/data_cache.cpp
     core/alarm_engine.h

@@ -41,6 +41,11 @@ public:
     Q_INVOKABLE bool loadConfig(const QString &jsonPath);
     Q_INVOKABLE void connectAll();
     Q_INVOKABLE void disconnectAll();
+    /// Remote control: write one holding register on a device (遥控/参数下发).
+    /// The write is async; "ok" here means the request was handed to the
+    /// transport, not that the peer confirmed it (results arrive via
+    /// communicationError on failure, and via the next poll on success).
+    Q_INVOKABLE void writeRegister(int deviceIndex, int regAddr, quint16 value);
     void startPolling(int intervalMs = 100);
     void stopPolling();
 
@@ -51,6 +56,10 @@ public:
     SampleQueue *queue() { return &m_queue; }
 
     AlarmEngine *alarmEngine() const { return m_alarms; }
+
+    /// The SQLite history store — lives on the worker thread with this object,
+    /// so the GUI must query it via QMetaObject::invokeMethod (queued).
+    HistoryStore *historyStore() const { return m_history; }
 
     /// Total samples handed to the history store (thread-safe read).
     qint64 historySamples() const;
@@ -117,6 +126,8 @@ signals:
     void statusMessage(const QString &message);
     /// loadConfig() finished and m_devices is ready (GUI updates the cache).
     void configLoaded();
+    /// A writeRegister() request was accepted (or rejected) by the transport.
+    void writeFinished(int deviceIndex, bool ok, const QString &message);
 };
 
 #endif // DATA_COLLECTOR_H

@@ -2,6 +2,7 @@
 #define SIMULATED_SERIAL_SERVER_H
 
 #include <QObject>
+#include <QHash>
 
 class QModbusRtuSerialServer;
 class SimulatedDevice;
@@ -33,6 +34,10 @@ private:
 
     SimulatedDevice        *m_device = nullptr;
     QModbusRtuSerialServer *m_server = nullptr;
+    /// Host-written registers hold their value until the server restarts.
+    QHash<int, quint16> m_overrides;
+    /// Reentrancy guard — setData() emits dataWritten(); see TCP simulator.
+    bool m_pushing = false;
 };
 
 #endif // SIMULATED_SERIAL_SERVER_H

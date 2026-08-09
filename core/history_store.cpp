@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QStringList>
 #include <QDebug>
 
 // ---------------------------------------------------------------------------
@@ -85,6 +86,108 @@ void HistoryStore::addAlarm(const AlarmRecord &rec)
 bool HistoryStore::flush()
 {
     return doFlush();
+}
+
+// ---------------------------------------------------------------------------
+// read-back API (worker thread)
+// ---------------------------------------------------------------------------
+
+void HistoryStore::querySamples(int requestId, int deviceIndex,
+                                const HistoryQuery &q)
+{
+    HistoryResult result;
+    result.requestId = requestId;
+    result.deviceIndex = deviceIndex;
+
+    if ((!m_dbOpen && !openDatabase()) || !QSqlDatabase::database(
+            connectionName(), false).isOpen()) {
+        // No history has been written yet — an empty result is the correct
+        // answer, not an error.
+        emit samplesReady(requestId, deviceIndex, result);
+        return;
+    }
+
+    QString sql = QStringLiteral(
+        "SELECT reg_addr, ts, value FROM samples "
+        "WHERE device_index = :dev AND ts >= :start AND ts <= :end");
+    if (!q.regAddrs.isEmpty()) {
+        QStringList ph;
+        for (int i = 0; i < q.regAddrs.size(); ++i)
+            ph << QStringLiteral(":a%1").arg(i);
+        sql += QStringLiteral(" AND reg_addr IN (%1)").arg(ph.join(QLatin1Char(',')));
+    }
+    sql += QStringLiteral(" ORDER BY ts ASC LIMIT %1").arg(kMaxQueryRows);
+
+    QSqlDatabase db = QSqlDatabase::database(connectionName(), false);
+    QSqlQuery query(db);
+    if (!query.prepare(sql)) {
+        qWarning() << "HistoryStore::querySamples: prepare failed:"
+                   << query.lastError().text();
+        emit samplesReady(requestId, deviceIndex, result);
+        return;
+    }
+
+    query.bindValue(QStringLiteral(":dev"), deviceIndex);
+    query.bindValue(QStringLiteral(":start"), q.startMs);
+    query.bindValue(QStringLiteral(":end"), q.endMs);
+    for (int i = 0; i < q.regAddrs.size(); ++i)
+        query.bindValue(QStringLiteral(":a%1").arg(i), q.regAddrs.at(i));
+
+    if (!query.exec()) {
+        qWarning() << "HistoryStore::querySamples: exec failed:"
+                   << query.lastError().text();
+        emit samplesReady(requestId, deviceIndex, result);
+        return;
+    }
+
+    result.rows.reserve(1024);
+    while (query.next()) {
+        HistoryRow row;
+        row.regAddr = query.value(0).toInt();
+        row.tsMs    = query.value(1).toLongLong();
+        row.value   = query.value(2).toDouble();
+        result.rows.append(row);
+    }
+    emit samplesReady(requestId, deviceIndex, result);
+}
+
+void HistoryStore::queryAlarms(int requestId, int deviceIndex,
+                               qint64 startMs, qint64 endMs)
+{
+    QVector<AlarmRecord> alarms;
+    if ((!m_dbOpen && !openDatabase()) || !QSqlDatabase::database(
+            connectionName(), false).isOpen()) {
+        emit alarmsReady(requestId, deviceIndex, alarms);
+        return;
+    }
+
+    QSqlDatabase db = QSqlDatabase::database(connectionName(), false);
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "SELECT ts, severity, device_index, message FROM alarms "
+        "WHERE device_index = :dev AND ts >= :start AND ts <= :end "
+        "ORDER BY ts ASC LIMIT %1").arg(kMaxQueryRows));
+    query.bindValue(QStringLiteral(":dev"), deviceIndex);
+    query.bindValue(QStringLiteral(":start"), startMs);
+    query.bindValue(QStringLiteral(":end"), endMs);
+
+    if (!query.exec()) {
+        qWarning() << "HistoryStore::queryAlarms: exec failed:"
+                   << query.lastError().text();
+        emit alarmsReady(requestId, deviceIndex, alarms);
+        return;
+    }
+
+    while (query.next()) {
+        AlarmRecord a;
+        a.timestamp  = QDateTime::fromMSecsSinceEpoch(query.value(0).toLongLong());
+        a.severity   = static_cast<AlarmRecord::Severity>(query.value(1).toInt());
+        a.deviceAddr = static_cast<qint16>(query.value(2).toInt());
+        a.message    = query.value(3).toString();
+        a.acknowledged = false;
+        alarms.append(a);
+    }
+    emit alarmsReady(requestId, deviceIndex, alarms);
 }
 
 // ---------------------------------------------------------------------------

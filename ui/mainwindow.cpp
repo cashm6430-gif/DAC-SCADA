@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include "main_viewmodel.h"
 #include "curve_panel.h"
+#include "history_panel.h"
+#include "write_register_dialog.h"
 #include "simulator/simulated_modbus_server.h"
 #include "simulator/simulated_serial_server.h"
 #include "core/types.h"
@@ -27,6 +29,7 @@
 #include <QTextStream>
 #include <array>
 #include <memory>
+#include <cmath>
 
 namespace {
 /// 报警表保留的最大行数 —— 防止长时运行行数无限增长。
@@ -82,6 +85,10 @@ void MainWindow::setupUi()
                                             this, &MainWindow::toggleSimulator);
     simToggle->setObjectName("simulatorToggle");
 
+    QMenu *ctrlMenu = menuBar()->addMenu(tr("&控制"));
+    ctrlMenu->addAction(tr("写寄存器…"),
+                        this, [this]() { openWriteRegisterDialog(); });
+
     // ======================= 工具栏 =======================
     QToolBar *toolbar = addToolBar(tr("Main"));
     toolbar->setMovable(false);
@@ -89,6 +96,8 @@ void MainWindow::setupUi()
     toolbar->addSeparator();
     toolbar->addAction(tr("🔗 连接"),    this, [this]() { m_viewModel->connectToDevice(); });
     toolbar->addAction(tr("⏹ 断开"),    this, [this]() { m_viewModel->disconnectFromDevice(); });
+    toolbar->addSeparator();
+    toolbar->addAction(tr("✎ 写寄存器"), [this]() { openWriteRegisterDialog(); });
 
     // ======================= 中央区域：数据表 + 曲线 =======================
     auto *central = new QWidget(this);
@@ -112,6 +121,22 @@ void MainWindow::setupUi()
     m_dataTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_dataTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     tableLayout->addWidget(m_dataTable);
+
+    // 右键通道行 → 直接对该寄存器发起遥控写入
+    m_dataTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_dataTable, &QTableView::customContextMenuRequested, this,
+            [this](const QPoint &pos) {
+                const int row = m_dataTable->indexAt(pos).row();
+                const auto &channels = m_viewModel->cache()->currentChannels();
+                if (row < 0 || row >= channels.size())
+                    return;
+                const int regAddr = channels.at(row).regAddr;
+                QMenu menu(this);
+                QAction *act = menu.addAction(tr("写入该寄存器 (%1)…").arg(regAddr));
+                connect(act, &QAction::triggered, this,
+                        [this, regAddr]() { openWriteRegisterDialog(regAddr); });
+                menu.exec(m_dataTable->viewport()->mapToGlobal(pos));
+            });
 
     // --- 下方：实时曲线 ---
     auto *curveContainer = new QWidget(splitter);
@@ -161,6 +186,20 @@ void MainWindow::setupUi()
     m_alarmTable->setMaximumHeight(200);
     alarmDock->setWidget(m_alarmTable);
     addDockWidget(Qt::BottomDockWidgetArea, alarmDock);
+
+    // ======================= 右侧：历史查询 dock =======================
+    m_historyDock = new QDockWidget(tr("历史查询"), this);
+    m_historyDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_historyPanel = new HistoryPanel(m_viewModel, m_historyDock);
+    m_historyDock->setWidget(m_historyPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_historyDock);
+
+    // ======================= 菜单栏：查看（dock 可见性切换） =======================
+    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+    viewMenu->addAction(m_historyDock->toggleViewAction());
+    viewMenu->addSeparator();
+    viewMenu->addAction(deviceDock->toggleViewAction());
+    viewMenu->addAction(alarmDock->toggleViewAction());
 }
 
 void MainWindow::createStatusBar()
@@ -228,6 +267,8 @@ void MainWindow::bindToViewModel()
         m_deviceTree->clear();          // 会删除全部 QTreeWidgetItem
         m_deviceItems.clear();          // 必须先清空，否则残留悬垂指针
         const auto &devices = m_viewModel->cache()->devices();
+        if (m_historyPanel)
+            m_historyPanel->setDevices(devices);   // 历史查询面板同步设备列表
         for (int i = 0; i < devices.size(); ++i) {
             auto *item = new QTreeWidgetItem(m_deviceTree);
             item->setText(0, devices.at(i).name);
@@ -293,6 +334,12 @@ void MainWindow::bindToViewModel()
                 statusBar()->showMessage(text, 3000);
             });
 
+    // ---- 遥控写入结果 → 状态栏 ----
+    connect(m_viewModel, &MainViewModel::writeFinished,
+            this, [this](int, bool, const QString &msg) {
+                statusBar()->showMessage(msg, 5000);
+            });
+
     // ---- 报警 → 报警表 ----
     connect(m_viewModel, &MainViewModel::newAlarm, this,
             [this](const AlarmRecord &rec) {
@@ -356,6 +403,21 @@ void MainWindow::updateDeviceStatus()
         item->setText(2, text);
         item->setForeground(2, color);
     }
+}
+
+void MainWindow::openWriteRegisterDialog(int initialRegAddr)
+{
+    const auto &devices = m_viewModel->cache()->devices();
+    if (devices.isEmpty()) {
+        statusBar()->showMessage(tr("无设备配置"), 3000);
+        return;
+    }
+
+    WriteRegisterDialog dlg(devices,
+                            m_viewModel->cache()->currentDevice(),
+                            initialRegAddr, this);
+    if (dlg.exec() == QDialog::Accepted)
+        m_viewModel->writeRegister(dlg.deviceIndex(), dlg.regAddr(), dlg.value());
 }
 
 void MainWindow::appendAlarmRow(const QString &time, const QString &severity,
@@ -501,5 +563,112 @@ void MainWindow::runSelfTestReconnect(const QString &outPath)
             }
             QApplication::exit((*check)[0] && (*check)[1] ? 0 : 1);
         });
+    });
+}
+
+void MainWindow::runSelfTestHistory(const QString &outPath)
+{
+    // 只起两台 TCP 模拟器（历史读路径不依赖串口/com0com）。
+    const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
+    const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
+
+    // 清掉上次运行的库，保证本次查询是"采集后写进库"的数据。
+    QFile::remove(QCoreApplication::applicationDirPath()
+                  + QStringLiteral("/data/history.db"));
+
+    // 查询起点：模拟器启动之前，覆盖全部采集数据。
+    const qint64 startMs = QDateTime::currentMSecsSinceEpoch();
+
+    constexpr int kMotorIdx = 2;   // 电机PLC-2（devices.json 第三台）
+    auto captured = std::make_shared<std::pair<int, int>>(0, 0);  // (rows, gotResult)
+
+    connect(m_viewModel, &MainViewModel::historySamplesReady, this,
+            [captured](int, int, const HistoryResult &res) {
+                captured->first = res.rows.size();
+                captured->second = 1;
+            });
+
+    QTimer::singleShot(500, this, [this]() { m_viewModel->connectToDevice(); });
+
+    // t=4.5s 发起异步查询（此时至少已落盘 3~4 次 flush）
+    QTimer::singleShot(4500, this, [this, startMs]() {
+        HistoryQuery q;
+        q.startMs = startMs;
+        q.endMs   = QDateTime::currentMSecsSinceEpoch();
+        m_viewModel->queryHistory(kMotorIdx, q);
+    });
+
+    // t=6.5s 结果已回 → 汇总写文件后退出
+    QTimer::singleShot(6500, this, [this, outPath, ok1, ok2, captured]() {
+        QFile file(outPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            QTextStream ts(&file);
+            ts << "DAC-SCADA history self-test\n";
+            ts << "============================\n";
+            ts << "simulator1502: " << (ok1 ? "OK" : "FAIL")
+               << ", simulator1503: " << (ok2 ? "OK" : "FAIL") << "\n";
+            ts << "queryGotResult: " << (captured->second ? "yes" : "no") << "\n";
+            ts << "motorSamples: " << captured->first << "\n";
+            ts << "result: "
+               << (captured->second && captured->first > 0 ? "PASS" : "FAIL")
+               << "\n";
+            ts << "============================\n";
+            file.close();
+        }
+        QApplication::exit(captured->second && captured->first > 0 ? 0 : 1);
+    });
+}
+
+void MainWindow::runSelfTestWrite(const QString &outPath)
+{
+    // 只起两台 TCP 模拟器（写寄存器不依赖串口）。
+    const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
+    const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
+
+    constexpr int    kMotorIdx = 2;    // 电机PLC-2（devices.json 第三台）
+    constexpr int    kRegAddr  = 0;    // 电流通道
+    constexpr quint16 kRaw     = 30000;  // ×scale 0.01 → 300.00 A，远离波形范围
+
+    // [0] 写后 1s 读回值, [1] 写后 2.5s 读回值（应仍≈300，说明被保持）
+    auto captured = std::make_shared<std::array<double, 2>>();
+
+    QTimer::singleShot(500, this, [this]() { m_viewModel->connectToDevice(); });
+
+    // t=1.5s 写入；写请求在总线忙时会在驱动内延迟补发
+    QTimer::singleShot(1500, this,
+                       [this]() { m_viewModel->writeRegister(kMotorIdx, kRegAddr, kRaw); });
+
+    QTimer::singleShot(2500, this, [this, captured]() {
+        (*captured)[0] = m_viewModel->cache()->value(kMotorIdx, kRegAddr);
+    });
+    QTimer::singleShot(4000, this, [this, captured]() {
+        (*captured)[1] = m_viewModel->cache()->value(kMotorIdx, kRegAddr);
+    });
+
+    // t=4.5s 汇总写文件后退出
+    QTimer::singleShot(4500, this, [this, outPath, ok1, ok2, captured]() {
+        const double v0 = (*captured)[0];
+        const double v1 = (*captured)[1];
+        const double expected = kRaw * 0.01;   // 300.0
+        const bool held = std::abs(v0 - expected) < 5.0
+                       && std::abs(v1 - expected) < 5.0
+                       && std::abs(v0 - v1) < 1.0;   // 值稳定，不被波形覆盖
+
+        QFile file(outPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            QTextStream ts(&file);
+            ts << "DAC-SCADA write self-test\n";
+            ts << "============================\n";
+            ts << "simulator1502: " << (ok1 ? "OK" : "FAIL")
+               << ", simulator1503: " << (ok2 ? "OK" : "FAIL") << "\n";
+            ts << "wrote motor reg" << kRegAddr << " = " << kRaw
+               << " (期望 " << expected << ")\n";
+            ts << "readback@t=2.5s: " << QString::number(v0, 'f', 3) << "\n";
+            ts << "readback@t=4.0s: " << QString::number(v1, 'f', 3) << "\n";
+            ts << "result: " << (held ? "PASS (值保持)" : "FAIL (被波形覆盖)") << "\n";
+            ts << "============================\n";
+            file.close();
+        }
+        QApplication::exit(held ? 0 : 1);
     });
 }

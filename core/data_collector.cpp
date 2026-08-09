@@ -229,6 +229,29 @@ void DataCollector::startPolling(int intervalMs)
     }
 }
 
+void DataCollector::writeRegister(int deviceIndex, int regAddr, quint16 value)
+{
+    if (deviceIndex < 0 || deviceIndex >= m_ctx.size()) {
+        emit writeFinished(deviceIndex, false, tr("设备索引无效"));
+        return;
+    }
+
+    DeviceContext *ctx = m_ctx.at(deviceIndex);
+    if (!ctx->client || !ctx->client->isConnected()) {
+        emit writeFinished(deviceIndex, false,
+                           tr("%1 未连接").arg(ctx->info.name));
+        return;
+    }
+
+    // Async hand-off: the transport sends the write on the bus and reports
+    // protocol errors via communicationError; success shows up as the new
+    // register value on the next poll tick.
+    ctx->client->writeSingleRegister(regAddr, value);
+    emit writeFinished(deviceIndex, true,
+        tr("已向 %1 写入寄存器 %2 = %3")
+            .arg(ctx->info.name).arg(regAddr).arg(value));
+}
+
 void DataCollector::stopPolling()
 {
     if (m_pollTimer->isActive()) {

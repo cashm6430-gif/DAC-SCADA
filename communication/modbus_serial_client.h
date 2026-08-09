@@ -37,6 +37,7 @@ private slots:
 
 private:
     void sendReadRequest(int startAddr, int count);
+    void sendWriteRequest(int regAddr, quint16 value);
 
     QModbusRtuSerialClient *m_client = nullptr;
     QString  m_portName;
@@ -47,6 +48,10 @@ private:
     /// register data (it would feed the cache/alarm engine with the written
     /// value as if it were a fresh reading).
     bool m_pendingReadRequest = false;
+    /// Deferred control write (see ModbusTcpClient for details).
+    bool     m_pendingWrite = false;
+    int      m_pendingWriteAddr = 0;
+    quint16  m_pendingWriteValue = 0;
 };
 
 #endif // MODBUS_SERIAL_CLIENT_H

@@ -59,6 +59,7 @@ void ModbusSerialClient::disconnectFrom()
         m_pendingReply->deleteLater();
         m_pendingReply = nullptr;
     }
+    m_pendingWrite = false;   // a stale deferred write must not cross a reconnect
     m_client->disconnectDevice();
 }
 
@@ -104,9 +105,19 @@ void ModbusSerialClient::writeSingleRegister(int regAddr, quint16 value)
         emit communicationError(tr("串口未连接: %1").arg(m_portName));
         return;
     }
-    if (m_pendingReply)
+    if (m_pendingReply) {
+        // Bus busy with a read — stash the write and flush it when free (the
+        // poller re-issues reads every tick, but a control write must not drop).
+        m_pendingWrite = true;
+        m_pendingWriteAddr = regAddr;
+        m_pendingWriteValue = value;
         return;
+    }
+    sendWriteRequest(regAddr, value);
+}
 
+void ModbusSerialClient::sendWriteRequest(int regAddr, quint16 value)
+{
     QModbusDataUnit unit(QModbusDataUnit::HoldingRegisters, regAddr, 1);
     unit.setValue(0, value);
 
@@ -138,22 +149,26 @@ void ModbusSerialClient::onReplyFinished()
     auto *reply = m_pendingReply;
     m_pendingReply = nullptr;
 
-    if (!reply)
-        return;
-
-    if (reply->error() != QModbusDevice::NoError) {
-        emit communicationError(tr("Modbus 响应错误: %1")
-                                    .arg(reply->errorString()));
+    if (reply) {
+        if (reply->error() != QModbusDevice::NoError) {
+            emit communicationError(tr("Modbus 响应错误: %1")
+                                        .arg(reply->errorString()));
+        } else {
+            const auto result = reply->result();
+            if (result.isValid() && m_pendingReadRequest
+                && result.registerType() == QModbusDataUnit::HoldingRegisters)
+                emit registersRead(result);
+        }
         reply->deleteLater();
-        return;
     }
 
-    const auto result = reply->result();
-    reply->deleteLater();
-
-    if (result.isValid() && m_pendingReadRequest
-        && result.registerType() == QModbusDataUnit::HoldingRegisters)
-        emit registersRead(result);
+    // The bus is free — flush a deferred control write if one was queued.
+    if (m_pendingWrite && isConnected()) {
+        const int    addr = m_pendingWriteAddr;
+        const quint16 val = m_pendingWriteValue;
+        m_pendingWrite = false;
+        sendWriteRequest(addr, val);
+    }
 }
 
 void ModbusSerialClient::onErrorOccurred(QModbusDevice::Error error)

@@ -4,6 +4,8 @@
 #include <QString>
 #include <QColor>
 #include <QDateTime>
+#include <QVector>
+#include <QMetaType>
 
 struct Channel
 {
@@ -51,6 +53,35 @@ struct AlarmRecord {
     enum Severity { Info, Warning, Critical } severity = Info;
     bool       acknowledged = false;
 };
+
+// ---------------------------------------------------------------------------
+// History (read-back) query types — cross the GUI↔worker boundary by queued
+// signal, hence the metatype declaration at the bottom of this file.
+// ---------------------------------------------------------------------------
+
+/// One stored sample row returned by a history query.
+struct HistoryRow {
+    int    regAddr = 0;
+    qint64 tsMs    = 0;
+    double value   = 0.0;
+};
+
+/// Query condition. deviceIndex is carried separately by the command call.
+struct HistoryQuery {
+    QVector<int> regAddrs;   // empty = all channels of the device
+    qint64 startMs = 0;
+    qint64 endMs   = 0;
+};
+
+/// Result of a history query, delivered from the worker thread to the GUI.
+struct HistoryResult {
+    int    requestId = 0;
+    int    deviceIndex = -1;
+    QVector<HistoryRow> rows;   // sorted by ts ascending
+};
+
+Q_DECLARE_METATYPE(HistoryQuery)
+Q_DECLARE_METATYPE(HistoryResult)
 
 
 #endif

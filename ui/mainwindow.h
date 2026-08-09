@@ -7,11 +7,13 @@ class MainViewModel;
 class SimulatedModbusServer;
 class SimulatedSerialServer;
 class CurvePanel;
+class HistoryPanel;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTableView;
 class QTableWidget;
 class QLabel;
+class QDockWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -36,6 +38,12 @@ public:
     /// 重连自检：停掉 1503（电机PLC-2）→ 断言离线 → 重启 → 断言自动重连恢复
     void runSelfTestReconnect(const QString &outPath);
 
+    /// 历史读路径自检：采集约 4.5s → 异步查询电机PLC-2 采样 → 断言 rows>0 后退出
+    void runSelfTestHistory(const QString &outPath);
+
+    /// 遥控写自检：向电机PLC-2 寄存器0 写入一个远离波形的值 → 断言该值保持
+    void runSelfTestWrite(const QString &outPath);
+
 private slots:
     /// 启动 / 停止内置模拟下位机（Modbus TCP Server @ 127.0.0.1:1502）
     void toggleSimulator();
@@ -48,6 +56,8 @@ private:
                         const QString &device, const QString &message);
     /// Refresh all device-tree rows from the collector's live state.
     void updateDeviceStatus();
+    /// Open the modal remote-write dialog (initialRegAddr preselects a register).
+    void openWriteRegisterDialog(int initialRegAddr = -1);
 
     MainViewModel         *m_viewModel = nullptr;
     SimulatedModbusServer *m_simulator  = nullptr;   // TCP 设备1 @ 1502
@@ -62,6 +72,8 @@ private:
     CurvePanel         *m_curvePanel  = nullptr;   // 实时曲线
     QTableWidget       *m_alarmTable  = nullptr;   // 报警列表
     QLabel             *m_statusLabel = nullptr;   // 连接状态
+    HistoryPanel       *m_historyPanel = nullptr;  // 历史查询面板
+    QDockWidget        *m_historyDock  = nullptr;  // 历史查询 dock（菜单可见性切换）
 };
 
 #endif // MAINWINDOW_H

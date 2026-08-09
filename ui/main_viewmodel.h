@@ -55,12 +55,25 @@ public:
     void connectToDevice();
     void disconnectFromDevice();
     void switchDevice(int deviceIndex);
+    /// Issue an async history query; the result returns on historySamplesReady.
+    /// Returns the request id the caller can match against the result.
+    int queryHistory(int deviceIndex, const HistoryQuery &q);
+    /// Issue an async alarm-history query; the result on historyAlarmsReady.
+    int queryAlarms(int deviceIndex, qint64 startMs, qint64 endMs);
+    /// Remote control: write one holding register (executed on the worker
+    /// thread; outcome reported on writeFinished).
+    void writeRegister(int deviceIndex, int regAddr, quint16 value);
 
 signals:
     void deviceConnectionChanged(int deviceIndex, bool connected);
     void deviceOnlineChanged(int deviceIndex, bool online);
     void statusTextChanged(const QString &message);
     void newAlarm(const AlarmRecord &record);
+    void historySamplesReady(int requestId, int deviceIndex,
+                             const HistoryResult &rows);
+    void historyAlarmsReady(int requestId, int deviceIndex,
+                            const QVector<AlarmRecord> &alarms);
+    void writeFinished(int deviceIndex, bool ok, const QString &message);
 
 private slots:
     void drainSamples();
@@ -73,6 +86,8 @@ private:
 
     QThread *m_worker = nullptr;
     QTimer  *m_drainTimer = nullptr;
+
+    int m_historyRequestSeq = 0;   // monotonically increasing query request id
 
     QVector<DeviceStatus> m_status;          // GUI-thread device snapshot
     bool m_pollingActive = false;

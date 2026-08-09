@@ -2,6 +2,7 @@
 #include "core/data_cache.h"
 #include "core/alarm_engine.h"
 #include "core/data_collector.h"
+#include "core/history_store.h"
 #include "core/sample_queue.h"
 
 #include <QCoreApplication>
@@ -67,6 +68,16 @@ MainViewModel::MainViewModel(QObject *parent)
                         m_alarmHistory.size() - kMaxAlarmHistory);
                 emit newAlarm(rec);
             });
+
+    // ---- forward history query results (store lives on the worker thread) ----
+    connect(m_collector->historyStore(), &HistoryStore::samplesReady,
+            this, &MainViewModel::historySamplesReady);
+    connect(m_collector->historyStore(), &HistoryStore::alarmsReady,
+            this, &MainViewModel::historyAlarmsReady);
+
+    // ---- forward remote-write outcome ----
+    connect(m_collector, &DataCollector::writeFinished,
+            this, &MainViewModel::writeFinished);
 
     // ---- consumer side: drain the producer-consumer queue in batches ----
     m_drainTimer = new QTimer(this);
@@ -182,4 +193,39 @@ void MainViewModel::disconnectFromDevice()
 void MainViewModel::switchDevice(int deviceIndex)
 {
     m_cache->setCurrentDevice(deviceIndex);
+}
+
+int MainViewModel::queryHistory(int deviceIndex, const HistoryQuery &q)
+{
+    const int requestId = ++m_historyRequestSeq;
+    HistoryStore *store = m_collector->historyStore();
+    // Queued so the SELECT runs on the worker thread; the result comes back
+    // on historySamplesReady without ever blocking the GUI.
+    QMetaObject::invokeMethod(store, "querySamples", Qt::QueuedConnection,
+                              Q_ARG(int, requestId),
+                              Q_ARG(int, deviceIndex),
+                              Q_ARG(HistoryQuery, q));
+    return requestId;
+}
+
+int MainViewModel::queryAlarms(int deviceIndex, qint64 startMs, qint64 endMs)
+{
+    const int requestId = ++m_historyRequestSeq;
+    HistoryStore *store = m_collector->historyStore();
+    QMetaObject::invokeMethod(store, "queryAlarms", Qt::QueuedConnection,
+                              Q_ARG(int, requestId),
+                              Q_ARG(int, deviceIndex),
+                              Q_ARG(qint64, startMs),
+                              Q_ARG(qint64, endMs));
+    return requestId;
+}
+
+void MainViewModel::writeRegister(int deviceIndex, int regAddr, quint16 value)
+{
+    // Runs on the worker thread (collector affinity); the outcome is reported
+    // back through the queued writeFinished signal.
+    QMetaObject::invokeMethod(m_collector, "writeRegister", Qt::QueuedConnection,
+                              Q_ARG(int, deviceIndex),
+                              Q_ARG(int, regAddr),
+                              Q_ARG(quint16, value));
 }
