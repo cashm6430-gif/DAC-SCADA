@@ -83,11 +83,17 @@ void CurvePanel::addPoint(int regAddr, double value)
 
     series->append(static_cast<double>(msec), value);
 
-    // Drop points older than the window
+    // Drop points older than the window. Count the expired ones in a single
+    // pass, then remove them in bulk (a per-point points()/remove(0) loop is
+    // O(n²) once the window fills up).
     const double cutoff = static_cast<double>(
         QDateTime::currentMSecsSinceEpoch() - m_windowSeconds * 1000);
-    while (!series->points().isEmpty() && series->points().first().x() < cutoff)
-        series->remove(0);
+    const auto pts = series->points();
+    int drop = 0;
+    while (drop < pts.size() && pts.at(drop).x() < cutoff)
+        ++drop;
+    if (drop > 0)
+        series->removePoints(0, drop);
 }
 
 void CurvePanel::clear()

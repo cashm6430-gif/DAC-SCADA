@@ -26,6 +26,11 @@
 #include <QFile>
 #include <QTextStream>
 
+namespace {
+/// 报警表保留的最大行数 —— 防止长时运行行数无限增长。
+constexpr int kMaxAlarmRows = 500;
+}
+
 // ---------------------------------------------------------------------------
 // construction / destruction
 // ---------------------------------------------------------------------------
@@ -146,9 +151,9 @@ void MainWindow::setupUi()
     // ======================= 底部：报警列表 dock =======================
     auto *alarmDock = new QDockWidget(tr("警告信息"), this);
     alarmDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
-    m_alarmTable = new QTableWidget(0, 3, alarmDock);
-    m_alarmTable->setHorizontalHeaderLabels({tr("时间"), tr("级别"), tr("信息")});
-    m_alarmTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_alarmTable = new QTableWidget(0, 4, alarmDock);
+    m_alarmTable->setHorizontalHeaderLabels({tr("时间"), tr("级别"), tr("设备"), tr("信息")});
+    m_alarmTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
     m_alarmTable->verticalHeader()->setVisible(false);
     m_alarmTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_alarmTable->setMaximumHeight(200);
@@ -218,20 +223,33 @@ void MainWindow::bindToViewModel()
 
     // ---- 设备配置变化 → 重建硬件列表 ----
     connect(cache, &DataCache::devicesChanged, this, [this]() {
-        m_deviceTree->clear();
+        m_deviceTree->clear();          // 会删除全部 QTreeWidgetItem
+        m_deviceItems.clear();          // 必须先清空，否则残留悬垂指针
         const auto &devices = m_viewModel->cache()->devices();
         for (int i = 0; i < devices.size(); ++i) {
             auto *item = new QTreeWidgetItem(m_deviceTree);
             item->setText(0, devices.at(i).name);
-            item->setText(1, QStringLiteral("%1:%2")
-                              .arg(devices.at(i).ip).arg(devices.at(i).port));
+            item->setText(1, devices.at(i).connType == ConnType::Serial
+                             ? devices.at(i).serialPort
+                             : QStringLiteral("%1:%2")
+                                   .arg(devices.at(i).ip).arg(devices.at(i).port));
             item->setText(2, tr("离线"));
             item->setData(0, Qt::UserRole, i);
             m_deviceItems.append(item);
         }
-        // 默认选中第一个设备
-        if (!m_deviceItems.isEmpty())
+        // 默认选中第一个设备，并立即以当前设备初始化表格标题与曲线。
+        // 不能只靠 currentDeviceChanged 触发：点击已选中的设备时
+        // setCurrentDevice() 会因 index 未变而早退，曲线会一直空白。
+        if (!m_deviceItems.isEmpty()) {
             m_deviceTree->setCurrentItem(m_deviceItems.first());
+            const int idx = m_deviceItems.first()->data(0, Qt::UserRole).toInt();
+            if (idx >= 0 && idx < devices.size()) {
+                m_tableTitle->setText(tr("被监控的通道和数据 — %1")
+                                          .arg(devices.at(idx).name));
+            }
+            if (m_curvePanel)
+                m_curvePanel->setChannels(m_viewModel->cache()->currentChannels());
+        }
     });
 
     // ---- 设备连接状态 → 硬件列表状态列 ----
@@ -286,8 +304,14 @@ void MainWindow::bindToViewModel()
         default:
             level = tr("信息"); color = Qt::darkGreen; break;
         }
+        // 报警来源设备名（AlarmRecord::deviceAddr 记录的是设备索引）
+        const auto &devices = m_viewModel->cache()->devices();
+        QString device = tr("—");
+        if (rec.deviceAddr >= 0 && rec.deviceAddr < devices.size())
+            device = devices.at(rec.deviceAddr).name;
+
         appendAlarmRow(rec.timestamp.toString(QStringLiteral("hh:mm:ss")),
-                       level, rec.message);
+                       level, device, rec.message);
         const int row = m_alarmTable->rowCount() - 1;
         if (row >= 0) {
             auto *item = m_alarmTable->item(row, 1);
@@ -333,13 +357,19 @@ void MainWindow::updateDeviceStatus()
 }
 
 void MainWindow::appendAlarmRow(const QString &time, const QString &severity,
-                                const QString &message)
+                                const QString &device, const QString &message)
 {
     const int row = m_alarmTable->rowCount();
     m_alarmTable->insertRow(row);
     m_alarmTable->setItem(row, 0, new QTableWidgetItem(time));
     m_alarmTable->setItem(row, 1, new QTableWidgetItem(severity));
-    m_alarmTable->setItem(row, 2, new QTableWidgetItem(message));
+    m_alarmTable->setItem(row, 2, new QTableWidgetItem(device));
+    m_alarmTable->setItem(row, 3, new QTableWidgetItem(message));
+
+    // 防止报警表无限增长：超过上限移除最旧行
+    while (m_alarmTable->rowCount() > kMaxAlarmRows)
+        m_alarmTable->removeRow(0);
+
     m_alarmTable->scrollToBottom();
 }
 

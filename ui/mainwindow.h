@@ -42,7 +42,7 @@ private:
     void bindToViewModel();
     void createStatusBar();
     void appendAlarmRow(const QString &time, const QString &severity,
-                        const QString &message);
+                        const QString &device, const QString &message);
     /// Refresh all device-tree rows from the collector's live state.
     void updateDeviceStatus();
 
