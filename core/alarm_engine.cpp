@@ -55,9 +55,6 @@ void AlarmEngine::raise(int deviceIndex, const QString &message,
     rec.severity   = severity;
     rec.acknowledged = false;
 
-    m_history.append(rec);
-    if (m_history.size() > kMaxHistory)
-        m_history.remove(0, m_history.size() - kMaxHistory);
     emit newAlarm(rec);
 
     qInfo() << "[ALARM]" << rec.timestamp.toString("hh:mm:ss.zzz") << message;

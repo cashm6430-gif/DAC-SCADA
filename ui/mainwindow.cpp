@@ -25,6 +25,8 @@
 #include <QTimer>
 #include <QFile>
 #include <QTextStream>
+#include <array>
+#include <memory>
 
 namespace {
 /// 报警表保留的最大行数 —— 防止长时运行行数无限增长。
@@ -276,7 +278,7 @@ void MainWindow::bindToViewModel()
         bool anyConnected = false;
         const auto &devices = m_viewModel->cache()->devices();
         for (int i = 0; i < devices.size(); ++i) {
-            if (m_viewModel->collector()->isDeviceConnected(i)) {
+            if (m_viewModel->deviceConnected(i)) {
                 anyConnected = true;
                 break;
             }
@@ -321,10 +323,10 @@ void MainWindow::bindToViewModel()
 
     // ---- 通道值变化 → 仅当前设备的通道进曲线 ----
     connect(cache, &DataCache::valueChanged, this,
-            [this](int deviceIndex, int regAddr, double value) {
+            [this](int deviceIndex, int regAddr, double value, qint64 tsMs) {
                 if (m_curvePanel
                     && deviceIndex == m_viewModel->cache()->currentDevice()) {
-                    m_curvePanel->addPoint(regAddr, value);
+                    m_curvePanel->addPoint(regAddr, value, tsMs);
                 }
             });
 }
@@ -336,8 +338,8 @@ void MainWindow::updateDeviceStatus()
         if (!item)
             continue;
 
-        const bool connected = m_viewModel->collector()->isDeviceConnected(i);
-        const bool online    = m_viewModel->collector()->isDeviceOnline(i);
+        const bool connected = m_viewModel->deviceConnected(i);
+        const bool online    = m_viewModel->deviceOnline(i);
 
         QString text;
         QColor  color;
@@ -398,7 +400,7 @@ void MainWindow::runSelfTest(const QString &outPath)
                << ", simulator1503: " << (ok2 ? "OK" : "FAIL")
                << ", serialCOM6: " << (ok3 ? "OK" : "FAIL") << "\n";
             ts << "pollingActive: "
-               << (m_viewModel->collector()->pollingActive() ? "yes" : "no") << "\n";
+               << (m_viewModel->pollingActive() ? "yes" : "no") << "\n";
             ts << "NOTE: serial COM6 stopped at t=2s; pump should be OFFLINE\n";
             ts << "serialSim listening: "
                << (m_serialSim->isListening() ? "yes" : "no") << "\n";
@@ -407,13 +409,13 @@ void MainWindow::runSelfTest(const QString &outPath)
             for (int d = 0; d < devices.size(); ++d) {
                 ts << "[" << devices.at(d).name << "]\n"
                    << "  connected: "
-                   << (m_viewModel->collector()->isDeviceConnected(d) ? "yes" : "no")
+                   << (m_viewModel->deviceConnected(d) ? "yes" : "no")
                    << "\n"
                    << "  online: "
-                   << (m_viewModel->collector()->isDeviceOnline(d) ? "yes" : "no")
+                   << (m_viewModel->deviceOnline(d) ? "yes" : "no")
                    << "\n"
                    << "  failCount: "
-                   << m_viewModel->collector()->failureCount(d)
+                   << m_viewModel->deviceFailureCount(d)
                    << "\n";
                 for (const Channel &ch : devices.at(d).channels) {
                     const double v = cache->value(d, ch.regAddr);
@@ -428,9 +430,76 @@ void MainWindow::runSelfTest(const QString &outPath)
                 ts << "  [" << alarms.at(i).timestamp.toString("hh:mm:ss")
                    << "] " << alarms.at(i).message << "\n";
             }
+            ts << "historySamples: " << m_viewModel->historySamples() << "\n";
             file.close();
         }
         QApplication::exit(0);
+        });
+    });
+}
+
+void MainWindow::runSelfTestReconnect(const QString &outPath)
+{
+    // 只起两台 TCP 模拟器（串口依赖 com0com 虚拟串口，不参与本项验证）。
+    const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
+    const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
+
+    QTimer::singleShot(500, this, [this, outPath, ok1, ok2]() {
+        m_viewModel->connectToDevice();
+
+        // 电机PLC-2 的配置索引为 2（devices.json 第三台）。
+        constexpr int kMotorIdx = 2;
+
+        auto check = std::make_shared<std::array<bool, 2>>();  // [0] 离线@5s, [1] 在线@9s
+
+        // t=3s  停止 1503 → 触发断线 → 进入自动重连
+        QTimer::singleShot(3000, this, [this]() { m_simulator2->stop(); });
+
+        // t=5s  记录：电机应已离线
+        QTimer::singleShot(5000, this, [this, check]() {
+            (*check)[0] = !m_viewModel->deviceOnline(kMotorIdx);
+        });
+
+        // t=5.5s 重启 1503 → 自动重连（指数退避）应恢复
+        QTimer::singleShot(5500, this, [this]() {
+            m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
+        });
+
+        // t=9s  记录：电机应已重新在线
+        QTimer::singleShot(9000, this, [this, check]() {
+            (*check)[1] = m_viewModel->deviceOnline(kMotorIdx);
+        });
+
+        // t=9.5s 汇总写入结果文件后退出
+        QTimer::singleShot(9500, this, [this, outPath, ok1, ok2, check]() {
+            const auto &devices = m_viewModel->cache()->devices();
+            QFile file(outPath);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                QTextStream ts(&file);
+                ts << "DAC-SCADA reconnect self-test\n";
+                ts << "==================================\n";
+                ts << "simulator1502: " << (ok1 ? "OK" : "FAIL")
+                   << ", simulator1503: " << (ok2 ? "OK" : "FAIL") << "\n";
+                ts << "t=3s  stop 1503, t=5.5s restart\n";
+                const QString motor = (kMotorIdx < devices.size())
+                    ? devices.at(kMotorIdx).name : QStringLiteral("电机PLC-2");
+                ts << motor << " offline@t=5s  : "
+                   << ((*check)[0] ? "PASS (离线)" : "FAIL (仍在线)") << "\n";
+                ts << motor << " online@t=9s   : "
+                   << ((*check)[1] ? "PASS (已自动重连)" : "FAIL (未恢复)") << "\n";
+                ts << "==================================\n";
+                for (int d = 0; d < devices.size(); ++d) {
+                    ts << "[" << devices.at(d).name << "] connected="
+                       << (m_viewModel->deviceConnected(d) ? "yes" : "no")
+                       << " online="
+                       << (m_viewModel->deviceOnline(d) ? "yes" : "no")
+                       << " failCount=" << m_viewModel->deviceFailureCount(d)
+                       << "\n";
+                }
+                ts << "historySamples: " << m_viewModel->historySamples() << "\n";
+                file.close();
+            }
+            QApplication::exit((*check)[0] && (*check)[1] ? 0 : 1);
         });
     });
 }

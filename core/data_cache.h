@@ -73,12 +73,13 @@ public:
     DataCacheModel *tableModel() const { return m_model; }
 
 public slots:
-    void updateValue(int deviceIndex, int regAddr, double value);
+    void updateValue(int deviceIndex, int regAddr, double value,
+                     qint64 tsMs = 0);
 
 signals:
     void devicesChanged();
     void currentDeviceChanged(int deviceIndex);
-    void valueChanged(int deviceIndex, int regAddr, double value);
+    void valueChanged(int deviceIndex, int regAddr, double value, qint64 tsMs);
 
 private:
     QList<DeviceInfo> m_devices;

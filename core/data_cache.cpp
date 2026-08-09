@@ -1,5 +1,6 @@
 #include "data_cache.h"
 #include <QColor>
+#include <QDateTime>
 
 // ---------------------------------------------------------------------------
 // DataCacheModel
@@ -165,10 +166,13 @@ bool DataCache::hasValue(int deviceIndex, int regAddr) const
     return it.value().contains(regAddr);
 }
 
-void DataCache::updateValue(int deviceIndex, int regAddr, double value)
+void DataCache::updateValue(int deviceIndex, int regAddr, double value,
+                            qint64 tsMs)
 {
+    if (tsMs == 0)
+        tsMs = QDateTime::currentMSecsSinceEpoch();
     m_values[deviceIndex][regAddr] = value;
-    emit valueChanged(deviceIndex, regAddr, value);
+    emit valueChanged(deviceIndex, regAddr, value, tsMs);
 
     if (deviceIndex == m_currentDevice)
         m_model->valueUpdated(regAddr);

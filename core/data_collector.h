@@ -7,63 +7,58 @@
 #include <QTimer>
 #include <QModbusDataUnit>
 #include "types.h"
+#include "sample_queue.h"
 
 class IModbusClient;
-class DataCache;
 class AlarmEngine;
+class HistoryStore;
 
 /// Orchestrates the acquisition pipeline for MULTIPLE devices:
 ///
 ///   for each device:
-///     IModbusClient ──read──► DataCollector ──raw→real──► DataCache
-///                                                       └────► AlarmEngine
+///     IModbusClient ──read──► DataCollector ──real──► SampleQueue (GUI)
+///                                              ├────► HistoryStore (SQLite)
+///                                              └────► AlarmEngine
 ///
-/// Loads device/channel configuration from JSON, connects to every PLC or
-/// simulator over Modbus (TCP or serial), polls all connected devices on a
-/// shared timer, converts raw integers to real values and pushes them into
-/// the cache and alarm engine. All devices are polled concurrently; the UI
-/// switches which one is displayed. The transport (TCP vs serial) is decided
-/// at connect-time by a factory, so the acquisition logic itself is
-/// transport-agnostic.
+/// Owns the Modbus transports, the alarm engine, the history store and the
+/// sample queue. The whole object is moved onto a dedicated QThread by the
+/// ViewModel, so all network I/O, polling, alarm evaluation and SQLite writes
+/// happen OFF the GUI thread ("producer-consumer" — this collector is the
+/// producer; the GUI drains the queue on a timer).
+///
+/// Because it runs on the worker thread, its state must never be read
+/// directly from the GUI thread — the ViewModel mirrors link/online/failure
+/// state through signals instead.
 class DataCollector : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit DataCollector(DataCache *cache,
-                           AlarmEngine *alarms,
-                           QObject *parent = nullptr);
+    explicit DataCollector(QObject *parent = nullptr);
     ~DataCollector() override;
 
-    /// Load devices.json (multi-device). Returns false on parse failure.
-    bool loadConfig(const QString &jsonPath);
-
-    // ---- control ----
-    void connectAll();
-    void disconnectAll();
+    // ---- control (run on the worker thread; call via QMetaObject::invoke) ----
+    Q_INVOKABLE bool loadConfig(const QString &jsonPath);
+    Q_INVOKABLE void connectAll();
+    Q_INVOKABLE void disconnectAll();
     void startPolling(int intervalMs = 100);
     void stopPolling();
 
     // ---- config access ----
     const QList<DeviceInfo> &devices() const { return m_devices; }
-    int deviceCount() const { return m_devices.size(); }
 
-    /// Whether the TCP+Modbus connection for device \a index is established.
-    bool isDeviceConnected(int index) const;
-    /// Whether the device is considered online (has responded recently).
-    bool isDeviceOnline(int index) const;
-    /// Consecutive poll failures of device \a index (diagnostics).
-    int failureCount(int index) const;
-    bool pollingActive() const { return m_pollTimer.isActive(); }
+    /// The producer→consumer queue the GUI drains on its own thread.
+    SampleQueue *queue() { return &m_queue; }
 
-signals:
-    /// Transport link state (TCP connected / serial port opened).
-    void deviceConnectionChanged(int deviceIndex, bool connected);
-    /// Data-alive state (received a response recently).
-    void deviceOnlineChanged(int deviceIndex, bool online);
-    void statusMessage(const QString &message);
+    AlarmEngine *alarmEngine() const { return m_alarms; }
+
+    /// Total samples handed to the history store (thread-safe read).
+    qint64 historySamples() const;
 
 private:
+    /// Per-link reconnection state machine (heartbeat + exponential backoff).
+    enum class LinkState { Active, Reconnecting };
+
     struct DeviceContext {
         DeviceInfo   info;
         IModbusClient *client = nullptr;   // transport-specific instance
@@ -71,19 +66,37 @@ private:
         int regCount  = 0;
         int failCount = 0;   // consecutive poll failures (timeouts)
         qint64 lastSuccessMs = 0;  // last successful read timestamp
+
+        LinkState linkState = LinkState::Active;
+        int    retryCount = 0;        // completed failed attempts (backoff ^)
+        qint64 nextRetryAtMs = 0;     // do not retry before this timestamp
+        bool   manualDisconnect = false;  // user disconnect → no auto-reconnect
     };
 
-    DataCache   *m_cache;
-    AlarmEngine *m_alarms;
+    AlarmEngine  *m_alarms  = nullptr;   // owned (child)
+    HistoryStore *m_history = nullptr;   // owned (child)
+    SampleQueue   m_queue;               // owned (value member, thread-safe)
 
     QList<DeviceInfo>  m_devices;
     QVector<DeviceContext*> m_ctx;
-    QTimer m_pollTimer;
+    /// Poll timer — must be a QObject CHILD (not a value member) so that
+    /// moveToThread() migrates it together with this collector onto the
+    /// worker thread; a plain member timer would keep its GUI-thread affinity
+    /// and its start() from the worker thread would be a no-op.
+    QTimer *m_pollTimer = nullptr;
 
     /// Consecutive failures after which a device is considered offline.
     static constexpr int kOfflineThreshold = 2;
-    /// No successful response for this long → device considered offline.
+    /// Heartbeat timeout: no successful response for this long ⇒ offline.
     static constexpr int kOfflineTimeoutMs = 3000;
+    /// Exponential-backoff reconnection parameters.
+    static constexpr int kBackoffBaseMs = 500;    // first retry wait
+    static constexpr int kBackoffMaxMs = 30000;   // retry wait cap
+
+    // ---- reconnect state machine ----
+    void enterReconnect(DeviceContext *ctx);
+    void attemptReconnect(DeviceContext *ctx);
+    qint64 backoffMs(const DeviceContext *ctx) const;
 
 private slots:
     void onPollTick();
@@ -91,6 +104,19 @@ private slots:
     void onConnectionChanged(DeviceContext *ctx, bool connected);
     void onCommError(DeviceContext *ctx, const QString &msg);
     void setDeviceOnline(DeviceContext *ctx, bool online);
+
+signals:
+    /// Transport link state (TCP connected / serial port opened).
+    void deviceConnectionChanged(int deviceIndex, bool connected);
+    /// Data-alive state (received a response recently).
+    void deviceOnlineChanged(int deviceIndex, bool online);
+    /// Consecutive-failure counter changed (GUI-side diagnostics mirror).
+    void deviceFailCountChanged(int deviceIndex, int count);
+    /// Poll timer running state (GUI-side diagnostics mirror).
+    void pollingStateChanged(bool active);
+    void statusMessage(const QString &message);
+    /// loadConfig() finished and m_devices is ready (GUI updates the cache).
+    void configLoaded();
 };
 
 #endif // DATA_COLLECTOR_H

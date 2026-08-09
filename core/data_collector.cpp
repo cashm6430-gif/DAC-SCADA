@@ -2,14 +2,15 @@
 #include "communication/modbus_client_interface.h"
 #include "communication/modbus_tcp_client.h"
 #include "communication/modbus_serial_client.h"
-#include "core/data_cache.h"
 #include "core/alarm_engine.h"
+#include "core/history_store.h"
 
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QDebug>
 #include <algorithm>
 #include <limits>
@@ -19,12 +20,21 @@
 // construction / destruction
 // ---------------------------------------------------------------------------
 
-DataCollector::DataCollector(DataCache *cache, AlarmEngine *alarms, QObject *parent)
+DataCollector::DataCollector(QObject *parent)
     : QObject(parent)
-    , m_cache(cache)
-    , m_alarms(alarms)
 {
-    connect(&m_pollTimer, &QTimer::timeout, this, &DataCollector::onPollTick);
+    // Own both the alarm engine and the history store so they follow this
+    // object when the ViewModel moves it onto the worker thread.
+    m_alarms = new AlarmEngine(this);
+    m_history = new HistoryStore(
+        QCoreApplication::applicationDirPath()
+            + QStringLiteral("/data/history.db"),
+        this);
+    connect(m_alarms, &AlarmEngine::newAlarm,
+            m_history, &HistoryStore::addAlarm);
+
+    m_pollTimer = new QTimer(this);   // child → moves with this object
+    connect(m_pollTimer, &QTimer::timeout, this, &DataCollector::onPollTick);
 }
 
 DataCollector::~DataCollector()
@@ -32,6 +42,11 @@ DataCollector::~DataCollector()
     disconnectAll();
     qDeleteAll(m_ctx);
     m_ctx.clear();
+}
+
+qint64 DataCollector::historySamples() const
+{
+    return m_history ? m_history->totalSamples() : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,10 +136,9 @@ bool DataCollector::loadConfig(const QString &jsonPath)
         m_ctx.append(ctx);
     }
 
-    m_cache->setDevices(m_devices);
-
     qInfo() << "DataCollector: loaded" << m_devices.size()
             << "devices from" << jsonPath;
+    emit configLoaded();   // GUI thread now updates the DataCache
     return true;
 }
 
@@ -162,11 +176,25 @@ void DataCollector::connectAll()
                 this, [this, ctx](const QString &msg) { onCommError(ctx, msg); });
         ctx->client = c;
 
+        // Reset the reconnect state machine for a fresh connection attempt.
+        ctx->manualDisconnect = false;
+        ctx->linkState = LinkState::Active;
+        ctx->retryCount = 0;
+        ctx->nextRetryAtMs = 0;
+        ctx->failCount = 0;
+        emit deviceFailCountChanged(i, 0);
+        ctx->lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
+
         // From here on the transport is irrelevant to the acquisition logic.
         const bool ok = c->connectTo(ctx->info);
-        emit statusMessage(ok
-            ? tr("正在连接 %1 ...").arg(ctx->info.name)
-            : tr("连接 %1 失败").arg(ctx->info.name));
+        if (ok) {
+            emit statusMessage(tr("正在连接 %1 ...").arg(ctx->info.name));
+        } else {
+            // Immediate failure (e.g. serial port missing/busy) — the async
+            // state machine would never fire, so schedule a backoff retry.
+            emit statusMessage(tr("连接 %1 失败").arg(ctx->info.name));
+            enterReconnect(ctx);
+        }
     }
 }
 
@@ -174,6 +202,15 @@ void DataCollector::disconnectAll()
 {
     stopPolling();
     for (DeviceContext *ctx : std::as_const(m_ctx)) {
+        ctx->manualDisconnect = true;   // user intent — do not auto-reconnect
+        ctx->linkState = LinkState::Active;
+        ctx->retryCount = 0;
+        ctx->nextRetryAtMs = 0;
+        ctx->failCount = 0;
+        ctx->lastSuccessMs = 0;
+        if (ctx->info.online)
+            setDeviceOnline(ctx, false);
+
         if (ctx->client) {
             ctx->client->disconnectFrom();
             ctx->client->deleteLater();
@@ -184,34 +221,20 @@ void DataCollector::disconnectAll()
 
 void DataCollector::startPolling(int intervalMs)
 {
-    m_pollTimer.start(intervalMs);
+    if (!m_pollTimer->isActive()) {
+        m_pollTimer->start(intervalMs);
+        emit pollingStateChanged(true);
+        if (m_history)
+            m_history->start();   // worker thread — SQLite flush cadence
+    }
 }
 
 void DataCollector::stopPolling()
 {
-    m_pollTimer.stop();
-}
-
-bool DataCollector::isDeviceConnected(int index) const
-{
-    if (index < 0 || index >= m_ctx.size())
-        return false;
-    const DeviceContext *ctx = m_ctx.at(index);
-    return ctx->client && ctx->client->isConnected();
-}
-
-bool DataCollector::isDeviceOnline(int index) const
-{
-    if (index < 0 || index >= m_ctx.size())
-        return false;
-    return m_ctx.at(index)->info.online;
-}
-
-int DataCollector::failureCount(int index) const
-{
-    if (index < 0 || index >= m_ctx.size())
-        return 0;
-    return m_ctx.at(index)->failCount;
+    if (m_pollTimer->isActive()) {
+        m_pollTimer->stop();
+        emit pollingStateChanged(false);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +249,9 @@ void DataCollector::onConnectionChanged(DeviceContext *ctx, bool connected)
         // Link is up, but "online" requires an actual data response —
         // record a grace-period start so we don't instantly time out.
         ctx->lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
+        ctx->linkState = LinkState::Active;   // backoff loop is over
+        ctx->retryCount = 0;
+        ctx->nextRetryAtMs = 0;
         if (idx >= 0)
             emit deviceConnectionChanged(idx, true);
         emit statusMessage(tr("%1 链路已建立 (unit %2)")
@@ -236,7 +262,25 @@ void DataCollector::onConnectionChanged(DeviceContext *ctx, bool connected)
         setDeviceOnline(ctx, false);   // link dropped → certainly offline
         if (idx >= 0)
             emit deviceConnectionChanged(idx, false);
+
+        if (ctx->manualDisconnect)
+            return;   // user asked to disconnect — stay down
+
         emit statusMessage(tr("%1 链路已断开").arg(ctx->info.name));
+
+        // Advance the exponential-backoff state machine: an attempt that was
+        // in flight just failed, or the first failure schedules the initial
+        // retry.
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (ctx->linkState == LinkState::Reconnecting) {
+            ctx->retryCount++;
+            ctx->nextRetryAtMs = now + backoffMs(ctx);
+            emit statusMessage(tr("重连 %1 未成功，%.1fs 后重试")
+                                   .arg(ctx->info.name)
+                                   .arg(backoffMs(ctx) / 1000.0));
+        } else {
+            enterReconnect(ctx);
+        }
     }
 }
 
@@ -245,10 +289,21 @@ void DataCollector::onPollTick()
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     for (DeviceContext *ctx : std::as_const(m_ctx)) {
-        // Robust online detection: if no successful response for a while,
-        // mark the device offline regardless of transport error state.
-        if (ctx->lastSuccessMs > 0 && (now - ctx->lastSuccessMs) > kOfflineTimeoutMs)
+        // Heartbeat: the poll itself is the keep-alive; if no successful
+        // response arrives within the timeout the device is offline, and a
+        // silent TCP peer gets a fresh session via the reconnect machine.
+        if (ctx->lastSuccessMs > 0 && (now - ctx->lastSuccessMs) > kOfflineTimeoutMs) {
             setDeviceOnline(ctx, false);
+            if (ctx->info.connType == ConnType::Tcp)
+                enterReconnect(ctx);
+        }
+
+        // Reconnect machine: attempt a retry once its backoff has elapsed.
+        if (ctx->linkState == LinkState::Reconnecting
+            && !ctx->manualDisconnect
+            && now >= ctx->nextRetryAtMs) {
+            attemptReconnect(ctx);
+        }
 
         if (ctx->regCount <= 0)
             continue;
@@ -265,9 +320,11 @@ void DataCollector::onRegistersRead(DeviceContext *ctx,
         return;
 
     // A successful read means the device is alive — reset failure counter.
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     ctx->failCount = 0;
-    ctx->lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
-    setDeviceOnline(ctx, true);
+    emit deviceFailCountChanged(deviceIndex, 0);
+    ctx->lastSuccessMs = nowMs;
+    setDeviceOnline(ctx, true);   // also resets the reconnect backoff
 
     const auto rawValues = unit.values();
     const auto &channels = ctx->info.channels;
@@ -281,7 +338,11 @@ void DataCollector::onRegistersRead(DeviceContext *ctx,
             continue;
 
         const double real = rawValues.at(i) * it->scale + it->offset;
-        m_cache->updateValue(deviceIndex, regAddr, real);
+
+        // Producer-consumer hand-off: the GUI thread drains this queue on a
+        // timer; meanwhile the worker thread persists + evaluates the sample.
+        m_queue.push(Sample{deviceIndex, regAddr, real, nowMs});
+        m_history->addSample(deviceIndex, regAddr, nowMs, real);
         m_alarms->checkValue(deviceIndex, *it, real);
     }
 }
@@ -290,6 +351,7 @@ void DataCollector::onCommError(DeviceContext *ctx, const QString &msg)
 {
     Q_UNUSED(msg)
     ctx->failCount++;
+    emit deviceFailCountChanged(m_ctx.indexOf(ctx), ctx->failCount);
 
     // After several consecutive failures the device is considered offline.
     // This is how serial (and dead-TCP-peer) links are detected — there is no
@@ -312,7 +374,58 @@ void DataCollector::setDeviceOnline(DeviceContext *ctx, bool online)
     ctx->info.online = online;
     emit deviceOnlineChanged(idx, online);
 
-    emit statusMessage(online
-        ? tr("%1 恢复在线").arg(ctx->info.name)
-        : tr("%1 已离线（无响应）").arg(ctx->info.name));
+    if (online) {
+        // Data flowing ⇒ the link is genuinely healthy again.
+        ctx->linkState = LinkState::Active;
+        ctx->retryCount = 0;
+        ctx->nextRetryAtMs = 0;
+        emit statusMessage(tr("%1 恢复在线").arg(ctx->info.name));
+    } else {
+        emit statusMessage(tr("%1 已离线（无响应）").arg(ctx->info.name));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// reconnect state machine (heartbeat + exponential backoff)
+// ---------------------------------------------------------------------------
+
+qint64 DataCollector::backoffMs(const DeviceContext *ctx) const
+{
+    const int exp = qBound(0, ctx->retryCount, 12);
+    const qint64 ms = static_cast<qint64>(kBackoffBaseMs) << exp;   // base·2^n
+    return qMin(ms, static_cast<qint64>(kBackoffMaxMs));
+}
+
+void DataCollector::enterReconnect(DeviceContext *ctx)
+{
+    if (ctx->manualDisconnect)
+        return;
+    if (ctx->linkState == LinkState::Reconnecting)
+        return;
+
+    ctx->linkState = LinkState::Reconnecting;
+    ctx->retryCount = 0;   // grows by 1 per failed attempt
+    ctx->nextRetryAtMs = QDateTime::currentMSecsSinceEpoch() + kBackoffBaseMs;
+    emit statusMessage(tr("%1 进入自动重连（指数退避）").arg(ctx->info.name));
+}
+
+void DataCollector::attemptReconnect(DeviceContext *ctx)
+{
+    if (!ctx->client)
+        return;   // disconnectAll / config reload in progress
+
+    const bool ok = ctx->client->connectTo(ctx->info);
+    if (ok) {
+        // connectTo() is asynchronous — the result arrives via
+        // connectionStateChanged; a failure re-enters the backoff loop from
+        // onConnectionChanged().
+        emit statusMessage(tr("尝试重连 %1 ...").arg(ctx->info.name));
+    } else {
+        // Immediate failure (e.g. serial port still busy) — reschedule.
+        ctx->retryCount++;
+        ctx->nextRetryAtMs = QDateTime::currentMSecsSinceEpoch() + backoffMs(ctx);
+        emit statusMessage(tr("重连 %1 失败，%.1fs 后重试")
+                               .arg(ctx->info.name)
+                               .arg(backoffMs(ctx) / 1000.0));
+    }
 }

@@ -33,6 +33,9 @@ public:
     /// 自检模式：启动模拟器+连接+采集，把通道值写入 outPath 后退出
     void runSelfTest(const QString &outPath);
 
+    /// 重连自检：停掉 1503（电机PLC-2）→ 断言离线 → 重启 → 断言自动重连恢复
+    void runSelfTestReconnect(const QString &outPath);
+
 private slots:
     /// 启动 / 停止内置模拟下位机（Modbus TCP Server @ 127.0.0.1:1502）
     void toggleSimulator();
