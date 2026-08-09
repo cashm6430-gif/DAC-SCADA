@@ -95,6 +95,20 @@ void DataCacheModel::notifyRowsReset()
     endResetModel();
 }
 
+void DataCacheModel::valueUpdated(int regAddr)
+{
+    const auto &channels = m_cache->currentChannels();
+    for (int row = 0; row < channels.size(); ++row) {
+        if (channels.at(row).regAddr == regAddr) {
+            // 定向刷新该行的"当前值 + 状态"两列，避免整表 reset
+            emit dataChanged(createIndex(row, ColValue), createIndex(row, ColStatus));
+            return;
+        }
+    }
+    // 对应通道不在当前设备（异常情况）——回退为整表刷新
+    notifyRowsReset();
+}
+
 // ---------------------------------------------------------------------------
 // DataCache
 // ---------------------------------------------------------------------------
@@ -157,5 +171,5 @@ void DataCache::updateValue(int deviceIndex, int regAddr, double value)
     emit valueChanged(deviceIndex, regAddr, value);
 
     if (deviceIndex == m_currentDevice)
-        m_model->notifyRowsReset();
+        m_model->valueUpdated(regAddr);
 }

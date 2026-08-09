@@ -59,8 +59,6 @@ set(SOURCES
     core/data_cache.cpp
     core/alarm_engine.h
     core/alarm_engine.cpp
-    core/channel_manager.h
-    core/channel_manager.cpp
     core/data_collector.h
     core/data_collector.cpp
     core/types.h

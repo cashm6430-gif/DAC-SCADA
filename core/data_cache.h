@@ -36,6 +36,11 @@ public:
 
     void notifyRowsReset();
 
+    /// A value for \a regAddr of the current device just arrived — refresh
+    /// only the affected row (value + status cells) instead of resetting the
+    /// whole model, so a 10 Hz poll does not relayout the table constantly.
+    void valueUpdated(int regAddr);
+
 private:
     DataCache *m_cache;   // non-owning
 };

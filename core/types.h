@@ -9,10 +9,10 @@ struct Channel
 {
     QString unit;   // 单位
     QString name;   // 显示名称
-    quint16 regAddr; // 地址
+    quint16 regAddr = 0;      // 地址
     QColor  color;           // 曲线颜色
-    double  upperLimit;       // 报警上限
-    double  lowerLimit;       // 报警下限
+    double  upperLimit = 100.0; // 报警上限
+    double  lowerLimit = 0.0;   // 报警下限
     double  scale  = 1.0;     // 比例因子（PLC 整数 → 真实值）
     double  offset = 0.0;     // 偏移量，量程可能有补偿
 };
@@ -42,15 +42,6 @@ struct DeviceInfo {
     bool    online = false;
     /// Monitored channels owned by this device.
     QList<Channel> channels;
-};
-
-/// Key uniquely identifying a data point: (device, register).
-struct DataKey {
-    qint16 deviceAddr;
-    qint16 registerAddr;
-    bool operator==(const DataKey &o) const {
-        return deviceAddr == o.deviceAddr && registerAddr == o.registerAddr;
-    }
 };
 
 struct AlarmRecord {

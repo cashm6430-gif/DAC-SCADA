@@ -12,6 +12,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,8 @@ DataCollector::DataCollector(DataCache *cache, AlarmEngine *alarms, QObject *par
 DataCollector::~DataCollector()
 {
     disconnectAll();
+    qDeleteAll(m_ctx);
+    m_ctx.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -53,6 +56,14 @@ bool DataCollector::loadConfig(const QString &jsonPath)
     const QJsonObject root = doc.object();
 
     // ---- devices ----
+    // Parse succeeded, so the previous configuration is being replaced. Tear
+    // down any existing transports and free the old per-device contexts here
+    // (not at the top): a failed open/parse above must leave the previous
+    // config intact instead of leaving m_devices populated but m_ctx empty.
+    disconnectAll();
+    qDeleteAll(m_ctx);
+    m_ctx.clear();
+
     m_devices.clear();
     const QJsonArray devArr = root.value("devices").toArray();
     for (const auto &dval : devArr) {
@@ -94,8 +105,18 @@ bool DataCollector::loadConfig(const QString &jsonPath)
         auto *ctx = new DeviceContext;
         ctx->info = m_devices.at(i);
         if (!ctx->info.channels.isEmpty()) {
-            ctx->startAddr = ctx->info.channels.first().regAddr;
-            ctx->regCount  = ctx->info.channels.last().regAddr - ctx->startAddr + 1;
+            // Compute the register span from the min/max channel addresses so
+            // the read window stays correct even when channels are not listed
+            // in ascending address order (a bare first()/last() could yield a
+            // negative or oversized regCount for unsorted configs).
+            int minAddr = std::numeric_limits<int>::max();
+            int maxAddr = std::numeric_limits<int>::min();
+            for (const Channel &ch : std::as_const(ctx->info.channels)) {
+                minAddr = qMin(minAddr, static_cast<int>(ch.regAddr));
+                maxAddr = qMax(maxAddr, static_cast<int>(ch.regAddr));
+            }
+            ctx->startAddr = minAddr;
+            ctx->regCount  = maxAddr - minAddr + 1;
         }
         m_ctx.append(ctx);
     }
@@ -115,6 +136,15 @@ void DataCollector::connectAll()
 {
     for (int i = 0; i < m_ctx.size(); ++i) {
         DeviceContext *ctx = m_ctx.at(i);
+
+        // Re-entrant safety: if a previous transport is still alive, tear it
+        // down first so calling connectAll() twice does not leak a client or
+        // leave a zombie connection feeding data while polling.
+        if (ctx->client) {
+            ctx->client->disconnectFrom();
+            ctx->client->deleteLater();
+            ctx->client = nullptr;
+        }
 
         // Factory: pick the transport implementation from the config.
         IModbusClient *c = nullptr;
