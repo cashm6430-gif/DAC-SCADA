@@ -1,50 +1,48 @@
 #ifndef CURVE_PANEL_H
 #define CURVE_PANEL_H
 
-#include <QChartView>
+#include <QWidget>
 #include <QHash>
-#include <QList>
 #include "core/types.h"
 
-QT_BEGIN_NAMESPACE
-class QLineSeries;
-class QChart;
-class QDateTimeAxis;
-class QValueAxis;
-QT_END_NAMESPACE
+class QCustomPlot;
+class QCPGraph;
+class QCPAxis;
 
-/// Multi-channel real-time curve panel.
+/// Multi-channel real-time curve panel (QCustomPlot).
 ///
-/// One QLineSeries per monitored channel; the X axis is a scrolling time
-/// window (last N seconds). New points are appended on the GUI thread via
-/// addPoint(), the axis window is refreshed on a short timer.
-class CurvePanel : public QChartView
+/// One QCPGraph per monitored channel; the X axis is a scrolling time window
+/// of the last N seconds. addPoint() only appends data — repaints are
+/// deferred to a short GUI timer (onUiTick) that advances the axis window,
+/// prunes expired points and replots once, so a high-rate acquisition is
+/// amortized into a single redraw per tick.
+class CurvePanel : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit CurvePanel(QWidget *parent = nullptr);
 
-    /// Create / replace the series set from the channel configuration.
+    /// Create / replace the graph set from the channel configuration.
     void setChannels(const QList<Channel> &channels);
 
-    /// Append a (time, value) sample to the series of regAddr.
-    void addPoint(int regAddr, double value);
+    /// Append a (time, value) sample to the graph of regAddr.
+    void addPoint(int regAddr, double value, qint64 tsMs = 0);
 
-    /// Clear all series data.
+    /// Clear all graph data.
     void clear();
 
     void setWindowSeconds(int seconds) { m_windowSeconds = seconds; }
     int  windowSeconds() const { return m_windowSeconds; }
 
 private slots:
-    void refreshAxis();
+    void onUiTick();
 
 private:
-    QChart        *m_chart;
-    QDateTimeAxis *m_axisX;
-    QValueAxis    *m_axisY;
-    QHash<int, QLineSeries *> m_series;   // regAddr → series
+    QCustomPlot *m_plot = nullptr;
+    QCPAxis     *m_axisX = nullptr;
+    QCPAxis     *m_axisY = nullptr;
+    QHash<int, QCPGraph *> m_graphs;   // regAddr → graph
     int m_windowSeconds = 60;
 };
 

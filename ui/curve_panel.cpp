@@ -1,13 +1,11 @@
 #include "curve_panel.h"
 
-#include <QtCharts/QChart>
-#include <QtCharts/QLineSeries>
-#include <QtCharts/QDateTimeAxis>
-#include <QtCharts/QValueAxis>
-#include <QtCharts/QChartView>
-#include <QDateTime>
+#include <qcustomplot.h>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <QPen>
+#include <QBrush>
+#include <QDateTime>
 #include <limits>
 #include <utility>
 
@@ -16,33 +14,35 @@
 // ---------------------------------------------------------------------------
 
 CurvePanel::CurvePanel(QWidget *parent)
-    : QChartView(parent)
+    : QWidget(parent)
 {
-    setRenderHint(QPainter::Antialiasing);
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
 
-    m_chart = new QChart;
-    m_chart->legend()->setVisible(true);
-    m_chart->setTitle(tr("实时曲线"));
+    m_plot = new QCustomPlot(this);
+    layout->addWidget(m_plot);
 
-    m_axisX = new QDateTimeAxis;
-    m_axisX->setFormat(QStringLiteral("hh:mm:ss"));
-    m_axisX->setTitleText(tr("时间"));
-    m_axisX->setRange(QDateTime::currentDateTime().addSecs(-m_windowSeconds),
-                      QDateTime::currentDateTime());
+    // X axis = seconds since epoch, rendered as clock time (date-time ticker).
+    m_axisX = m_plot->xAxis;
+    QSharedPointer<QCPAxisTickerDateTime> ticker(new QCPAxisTickerDateTime);
+    ticker->setDateTimeFormat(QStringLiteral("hh:mm:ss"));
+    m_axisX->setTicker(ticker);
+    m_axisX->setLabel(tr("时间"));
+    const double now = QDateTime::currentMSecsSinceEpoch() / 1000.0;
+    m_axisX->setRange(now - m_windowSeconds, now);
 
-    m_axisY = new QValueAxis;
-    m_axisY->setTitleText(tr("数值"));
+    m_axisY = m_plot->yAxis;
+    m_axisY->setLabel(tr("数值"));
     m_axisY->setRange(0, 100);
 
-    m_chart->addAxis(m_axisX, Qt::AlignBottom);
-    m_chart->addAxis(m_axisY, Qt::AlignLeft);
+    m_plot->legend->setVisible(true);
+    m_plot->legend->setBrush(QBrush(QColor(255, 255, 255, 220)));
+    m_plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
 
-    setChart(m_chart);
-
-    // Refresh the scrolling time window periodically.
+    // Refresh the scrolling time window on a short tick.
     auto *timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &CurvePanel::refreshAxis);
-    timer->start(500);
+    connect(timer, &QTimer::timeout, this, &CurvePanel::onUiTick);
+    timer->start(50);
 }
 
 // ---------------------------------------------------------------------------
@@ -51,72 +51,71 @@ CurvePanel::CurvePanel(QWidget *parent)
 
 void CurvePanel::setChannels(const QList<Channel> &channels)
 {
-    // Remove existing series
-    const auto keys = m_series.keys();
-    for (int regAddr : keys) {
-        m_chart->removeSeries(m_series.value(regAddr));
-        m_series.value(regAddr)->deleteLater();
-    }
-    m_series.clear();
+    // Remove existing graphs (this also unregisters their legend items).
+    const auto keys = m_graphs.keys();
+    for (int regAddr : keys)
+        m_plot->removeGraph(m_graphs.value(regAddr));
+    m_graphs.clear();
 
     for (const Channel &ch : channels) {
-        auto *series = new QLineSeries;
-        series->setName(QStringLiteral("%1 [%2]").arg(ch.name, ch.unit));
-        series->setColor(ch.color.isValid() ? ch.color : QColor(Qt::green));
-        series->setPen(QPen(ch.color.isValid() ? ch.color : QColor(Qt::green), 1.5));
-
-        m_chart->addSeries(series);
-        series->attachAxis(m_axisX);
-        series->attachAxis(m_axisY);
-        m_series.insert(ch.regAddr, series);
+        m_plot->addGraph();
+        QCPGraph *graph = m_plot->graph(m_plot->graphCount() - 1);
+        const QColor color = ch.color.isValid() ? ch.color : QColor(Qt::green);
+        graph->setName(QStringLiteral("%1 [%2]").arg(ch.name, ch.unit));
+        graph->setPen(QPen(color, 1.5));
+        m_graphs.insert(ch.regAddr, graph);
     }
+
+    m_plot->replot();
 }
 
-void CurvePanel::addPoint(int regAddr, double value)
+void CurvePanel::addPoint(int regAddr, double value, qint64 tsMs)
 {
-    auto it = m_series.find(regAddr);
-    if (it == m_series.end())
+    // Defensive: callers that don't carry a real timestamp (tsMs == 0) fall
+    // back to "now" so the point lands inside the scrolling window.
+    if (tsMs <= 0)
+        tsMs = QDateTime::currentMSecsSinceEpoch();
+
+    const auto it = m_graphs.constFind(regAddr);
+    if (it == m_graphs.constEnd())
         return;
-
-    QLineSeries *series = it.value();
-    const qint64 msec = QDateTime::currentMSecsSinceEpoch();
-
-    series->append(static_cast<double>(msec), value);
-
-    // Drop points older than the window. Count the expired ones in a single
-    // pass, then remove them in bulk (a per-point points()/remove(0) loop is
-    // O(n²) once the window fills up).
-    const double cutoff = static_cast<double>(
-        QDateTime::currentMSecsSinceEpoch() - m_windowSeconds * 1000);
-    const auto pts = series->points();
-    int drop = 0;
-    while (drop < pts.size() && pts.at(drop).x() < cutoff)
-        ++drop;
-    if (drop > 0)
-        series->removePoints(0, drop);
+    it.value()->addData(tsMs / 1000.0, value);   // QCPGraph X = seconds
 }
 
 void CurvePanel::clear()
 {
-    for (auto *series : std::as_const(m_series))
-        series->clear();
+    for (auto *graph : std::as_const(m_graphs))
+        graph->data()->clear();
+    m_plot->replot();
 }
 
-void CurvePanel::refreshAxis()
-{
-    const QDateTime now = QDateTime::currentDateTime();
-    m_axisX->setRange(now.addSecs(-m_windowSeconds), now);
+// ---------------------------------------------------------------------------
+// private slots
+// ---------------------------------------------------------------------------
 
-    // Auto-scale Y to the visible data (fall back to 0..100 if empty)
+void CurvePanel::onUiTick()
+{
+    const double now = QDateTime::currentMSecsSinceEpoch() / 1000.0;
+
+    // Scroll the visible time window.
+    m_axisX->setRange(now - m_windowSeconds, now);
+
+    // Drop points older than the window so the buffers stay bounded.
+    const double cutoff = now - m_windowSeconds - 1.0;
+    for (auto *graph : std::as_const(m_graphs))
+        graph->data()->removeBefore(cutoff);
+
+    // Auto-scale Y to the visible data (fall back to 0..100 if empty).
     bool hasData = false;
     double minY = std::numeric_limits<double>::max();
     double maxY = std::numeric_limits<double>::lowest();
-    for (auto *series : std::as_const(m_series)) {
-        const auto pts = series->points();
-        for (const QPointF &p : pts) {
+    for (auto *graph : std::as_const(m_graphs)) {
+        auto it = graph->data()->findBegin(now - m_windowSeconds);
+        const auto end = graph->data()->constEnd();
+        for (; it != end; ++it) {
             hasData = true;
-            minY = qMin(minY, p.y());
-            maxY = qMax(maxY, p.y());
+            minY = qMin(minY, it->value);
+            maxY = qMax(maxY, it->value);
         }
     }
 
@@ -126,4 +125,7 @@ void CurvePanel::refreshAxis()
     } else {
         m_axisY->setRange(0, 100);
     }
+
+    // Batch the repaint to the next event-loop pass.
+    m_plot->replot(QCustomPlot::rpQueuedReplot);
 }

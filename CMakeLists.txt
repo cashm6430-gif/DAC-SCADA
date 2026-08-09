@@ -38,8 +38,24 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     Sql
     SerialPort
     SerialBus
-    Charts
+    PrintSupport
 )
+
+# ── QCustomPlot (vendored single-file charting library) ─────────────
+# Third-party code — compiled as its own static lib with warnings off so the
+# project-wide /W4 "zero warning" policy only applies to first-party sources.
+add_library(qcustomplot STATIC
+    third_party/qcustomplot/qcustomplot.cpp
+)
+target_include_directories(qcustomplot PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qcustomplot
+)
+target_link_libraries(qcustomplot PUBLIC
+    Qt6::Widgets Qt6::Gui Qt6::Core Qt6::PrintSupport
+)
+if(MSVC)
+    target_compile_options(qcustomplot PRIVATE /W0)
+endif()
 
 # ── Source files ──────────────────────────────────
 set(SOURCES
@@ -84,7 +100,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Sql
     Qt6::SerialPort
     Qt6::SerialBus
-    Qt6::Charts
+    qcustomplot
 )
 
 # ── Compiler warnings (MSVC) ──────────────────────
