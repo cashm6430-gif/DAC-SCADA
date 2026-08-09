@@ -8,22 +8,23 @@
 #include <QModbusDataUnit>
 #include "types.h"
 
-class ModbusTcpClient;
-class ModbusSerialClient;
+class IModbusClient;
 class DataCache;
 class AlarmEngine;
 
 /// Orchestrates the acquisition pipeline for MULTIPLE devices:
 ///
 ///   for each device:
-///     ModbusTcpClient ──read──► DataCollector ──raw→real──► DataCache
+///     IModbusClient ──read──► DataCollector ──raw→real──► DataCache
 ///                                                       └────► AlarmEngine
 ///
 /// Loads device/channel configuration from JSON, connects to every PLC or
-/// simulator over Modbus TCP, polls all connected devices on a shared timer,
-/// converts raw integers to real values and pushes them into the cache and
-/// alarm engine. All devices are polled concurrently; the UI switches which
-/// one is displayed.
+/// simulator over Modbus (TCP or serial), polls all connected devices on a
+/// shared timer, converts raw integers to real values and pushes them into
+/// the cache and alarm engine. All devices are polled concurrently; the UI
+/// switches which one is displayed. The transport (TCP vs serial) is decided
+/// at connect-time by a factory, so the acquisition logic itself is
+/// transport-agnostic.
 class DataCollector : public QObject
 {
     Q_OBJECT
@@ -64,9 +65,8 @@ signals:
 
 private:
     struct DeviceContext {
-        DeviceInfo info;
-        ModbusTcpClient    *tcpClient    = nullptr;
-        ModbusSerialClient *serialClient = nullptr;
+        DeviceInfo   info;
+        IModbusClient *client = nullptr;   // transport-specific instance
         int startAddr = 0;
         int regCount  = 0;
         int failCount = 0;   // consecutive poll failures (timeouts)
@@ -79,7 +79,6 @@ private:
     QList<DeviceInfo>  m_devices;
     QVector<DeviceContext*> m_ctx;
     QTimer m_pollTimer;
-    QHash<QString, ModbusSerialClient*> m_serialClients;  // portName → client
 
     /// Consecutive failures after which a device is considered offline.
     static constexpr int kOfflineThreshold = 2;

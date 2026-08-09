@@ -1,9 +1,9 @@
 #ifndef MODBUS_SERIAL_CLIENT_H
 #define MODBUS_SERIAL_CLIENT_H
 
-#include <QObject>
 #include <QModbusRtuSerialClient>
 #include <QModbusDataUnit>
+#include "modbus_client_interface.h"
 
 class QModbusReply;
 
@@ -12,7 +12,7 @@ class QModbusReply;
 /// Wraps QModbusRtuSerialClient. One serial bus (COM port) can carry several
 /// slave devices addressed by their Modbus unit address; this client is tied
 /// to a single COM port and the unitId used for requests is set per connect.
-class ModbusSerialClient : public QObject
+class ModbusSerialClient : public IModbusClient
 {
     Q_OBJECT
 
@@ -20,22 +20,15 @@ public:
     explicit ModbusSerialClient(QObject *parent = nullptr);
     ~ModbusSerialClient() override;
 
-    // ---- lifecycle ----
-    bool connectTo(const QString &portName, int baudRate = 9600, int unitId = 1);
-    void disconnectFrom();
-    bool isConnected() const;
+    // ---- IModbusClient ----
+    bool connectTo(const DeviceInfo &info) override;
+    void disconnectFrom() override;
+    bool isConnected() const override;
+    void readHoldingRegisters(int startAddr, int count) override;
+    void writeSingleRegister(int regAddr, quint16 value) override;
 
     QString portName() const { return m_portName; }
     int     unitId() const   { return m_unitId; }
-
-    // ---- Modbus operations ----
-    void readHoldingRegisters(int startAddr, int count);
-    void writeSingleRegister(int regAddr, quint16 value);
-
-signals:
-    void connectionStateChanged(bool connected);
-    void registersRead(const QModbusDataUnit &unit);
-    void communicationError(const QString &message);
 
 private slots:
     void onStateChanged(QModbusDevice::State state);

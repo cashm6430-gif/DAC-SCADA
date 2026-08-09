@@ -1,9 +1,9 @@
 #ifndef MODBUS_TCP_CLIENT_H
 #define MODBUS_TCP_CLIENT_H
 
-#include <QObject>
 #include <QModbusTcpClient>
 #include <QModbusDataUnit>
+#include "modbus_client_interface.h"
 
 class QModbusReply;
 
@@ -12,7 +12,7 @@ class QModbusReply;
 /// Connects to a Modbus TCP server (e.g. the built-in SimulatedModbusServer
 /// or a real PLC) and issues read/write requests. All requests are
 /// serialized internally (one at a time) to keep Modbus semantics safe.
-class ModbusTcpClient : public QObject
+class ModbusTcpClient : public IModbusClient
 {
     Q_OBJECT
 
@@ -20,25 +20,16 @@ public:
     explicit ModbusTcpClient(QObject *parent = nullptr);
     ~ModbusTcpClient() override;
 
-    // ---- lifecycle ----
-    bool connectTo(const QString &host, quint16 port = 502, int unitId = 1);
-    void disconnectFrom();
-    bool isConnected() const;
+    // ---- IModbusClient ----
+    bool connectTo(const DeviceInfo &info) override;
+    void disconnectFrom() override;
+    bool isConnected() const override;
+    void readHoldingRegisters(int startAddr, int count) override;
+    void writeSingleRegister(int regAddr, quint16 value) override;
 
     QString host() const   { return m_host; }
     quint16 port() const   { return m_port; }
     int     unitId() const { return m_unitId; }
-
-    // ---- Modbus operations ----
-    /// Issue an asynchronous read of holding registers. Results arrive via
-    /// registersRead(). Only one request is in flight at a time.
-    void readHoldingRegisters(int startAddr, int count);
-    void writeSingleRegister(int regAddr, quint16 value);
-
-signals:
-    void connectionStateChanged(bool connected);
-    void registersRead(const QModbusDataUnit &unit);
-    void communicationError(const QString &message);
 
 private slots:
     void onStateChanged(QModbusDevice::State state);

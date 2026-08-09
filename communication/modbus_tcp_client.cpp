@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 ModbusTcpClient::ModbusTcpClient(QObject *parent)
-    : QObject(parent)
+    : IModbusClient(parent)
 {
     m_client = new QModbusTcpClient(this);
 
@@ -27,17 +27,17 @@ ModbusTcpClient::~ModbusTcpClient()
 // lifecycle
 // ---------------------------------------------------------------------------
 
-bool ModbusTcpClient::connectTo(const QString &host, quint16 port, int unitId)
+bool ModbusTcpClient::connectTo(const DeviceInfo &info)
 {
     if (m_client->state() != QModbusDevice::UnconnectedState)
         m_client->disconnectDevice();
 
-    m_host   = host;
-    m_port   = port;
-    m_unitId = unitId;
+    m_host   = info.ip;
+    m_port   = info.port;
+    m_unitId = info.address;
 
-    m_client->setConnectionParameter(QModbusDevice::NetworkPortParameter, QVariant(port));
-    m_client->setConnectionParameter(QModbusDevice::NetworkAddressParameter, QVariant(host));
+    m_client->setConnectionParameter(QModbusDevice::NetworkPortParameter, QVariant(m_port));
+    m_client->setConnectionParameter(QModbusDevice::NetworkAddressParameter, QVariant(m_host));
     m_client->setTimeout(1000);
     m_client->setNumberOfRetries(1);
 

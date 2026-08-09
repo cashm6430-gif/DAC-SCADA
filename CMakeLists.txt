@@ -44,11 +44,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
 # ── Source files ──────────────────────────────────
 set(SOURCES
     main.cpp
-    communication/comm_interface.h
-    communication/serialport_comm.h
-    communication/serialport_comm.cpp
-    communication/modbus_rtu.h
-    communication/modbus_rtu.cpp
+    communication/modbus_client_interface.h
     communication/modbus_tcp_client.h
     communication/modbus_tcp_client.cpp
     communication/modbus_serial_client.h
@@ -59,8 +55,6 @@ set(SOURCES
     ui/main_viewmodel.cpp
     ui/curve_panel.h
     ui/curve_panel.cpp
-    core/device_manager.h
-    core/device_manager.cpp
     core/data_cache.h
     core/data_cache.cpp
     core/alarm_engine.h

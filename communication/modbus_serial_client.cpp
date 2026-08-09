@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 ModbusSerialClient::ModbusSerialClient(QObject *parent)
-    : QObject(parent)
+    : IModbusClient(parent)
 {
     m_client = new QModbusRtuSerialClient(this);
 
@@ -28,19 +28,19 @@ ModbusSerialClient::~ModbusSerialClient()
 // lifecycle
 // ---------------------------------------------------------------------------
 
-bool ModbusSerialClient::connectTo(const QString &portName, int baudRate, int unitId)
+bool ModbusSerialClient::connectTo(const DeviceInfo &info)
 {
     if (m_client->state() != QModbusDevice::UnconnectedState)
         m_client->disconnectDevice();
 
-    m_portName = portName;
-    m_baudRate = baudRate;
-    m_unitId   = unitId;
+    m_portName = info.serialPort;
+    m_baudRate = info.baudRate;
+    m_unitId   = info.address;
 
     m_client->setConnectionParameter(QModbusDevice::SerialPortNameParameter,
-                                     QVariant(portName));
+                                     QVariant(m_portName));
     m_client->setConnectionParameter(QModbusDevice::SerialBaudRateParameter,
-                                     QVariant(baudRate));
+                                     QVariant(m_baudRate));
     m_client->setConnectionParameter(QModbusDevice::SerialDataBitsParameter,
                                      QVariant(8));
     m_client->setConnectionParameter(QModbusDevice::SerialParityParameter,
