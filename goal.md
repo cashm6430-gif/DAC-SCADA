@@ -23,7 +23,21 @@
   - 手动断开置 `manualDisconnect`，不自动重连
   - 验证：`--selftest-reconnect` 停 1503 → 电机离线 PASS，重启 → 自动重连恢复 PASS
 
+- [x] **历史查询闭环（SQLite 读回 + 曲线回放 + CSV 导出）**
+  - `HistoryStore` 新增异步读 API（`querySamples`/`queryAlarms`）：SELECT 在 worker 线程执行，结果经排队信号回 GUI，大时间窗不卡界面（行数上限 20 万）
+  - 新增历史查询 dock（`ui/history_panel.*`）：设备/通道/时间范围选择，「采样曲线」QCustomPlot 静态回放 +「报警历史」两页签
+  - CSV 导出 UTF-8 带 BOM（Excel 中文不乱码），采样与报警均可导出
+  - 验证：`--selftest-history` 采集约 4.5s → 异步查询电机PLC-2 → 断言 rows>0 PASS
+
+- [x] **遥控写寄存器（远程控制/参数下发）**
+  - 接通预留的 `IModbusClient::writeSingleRegister`：`DataCollector::writeRegister`（worker 线程）+「写寄存器」对话框（菜单/工具栏/数据表右键）
+  - 总线忙时延迟补发：read 在途时写请求不丢（TCP/RTU 双驱动 `m_pendingWrite` 机制）
+  - 模拟器记录 `QModbusServer::dataWritten` → 被写寄存器保持写入值（波形不再覆盖，曲线可见稳定），直到模拟器重启
+  - 验证：`--selftest-write` 写入电机 reg0=30000 → 两时刻读回均≈300 PASS
+
 ## 验证命令
 - `cmake --preset release && cmake --build build_release --config Release`（/W4 零警告）
 - `build_release/Release/DAC-SCADA.exe --selftest` → `selftest_result.txt`
 - `build_release/Release/DAC-SCADA.exe --selftest-reconnect` → `reconnect_result.txt`
+- `build_release/Release/DAC-SCADA.exe --selftest-history` → `history_result.txt`
+- `build_release/Release/DAC-SCADA.exe --selftest-write` → `write_result.txt`

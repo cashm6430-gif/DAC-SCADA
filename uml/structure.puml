@@ -30,21 +30,23 @@ class ModbusTcpClient {
     - m_port : quint16 = 502
     - m_unitId : int = 1
     - m_pendingReply : QModbusReply*
+    - m_pendingReadRequest : bool
+    - m_pendingWrite : bool          ' 总线忙时延迟补发的写请求
+    - m_pendingWriteAddr : int
+    - m_pendingWriteValue : quint16
     ..
     + connectTo(info) : bool
     + disconnectFrom() : void
     + isConnected() : bool
     + readHoldingRegisters(startAddr, count) : void
     + writeSingleRegister(regAddr, value) : void
-    + host() : QString
-    + port() : quint16
-    + unitId() : int
     ..
     slots
-    - onStateChanged(state : QModbusDevice::State) : void
+    - onStateChanged(state) : void
     - onReplyFinished() : void
-    - onErrorOccurred(error : QModbusDevice::Error) : void
+    - onErrorOccurred(error) : void
     - sendReadRequest(startAddr, count) : void
+    - sendWriteRequest(regAddr, value) : void
 }
 
 class ModbusSerialClient {
@@ -53,20 +55,23 @@ class ModbusSerialClient {
     - m_baudRate : int = 9600
     - m_unitId : int = 1
     - m_pendingReply : QModbusReply*
+    - m_pendingReadRequest : bool
+    - m_pendingWrite : bool
+    - m_pendingWriteAddr : int
+    - m_pendingWriteValue : quint16
     ..
     + connectTo(info) : bool
     + disconnectFrom() : void
     + isConnected() : bool
     + readHoldingRegisters(startAddr, count) : void
     + writeSingleRegister(regAddr, value) : void
-    + portName() : QString
-    + unitId() : int
     ..
     slots
-    - onStateChanged(state : QModbusDevice::State) : void
+    - onStateChanged(state) : void
     - onReplyFinished() : void
-    - onErrorOccurred(error : QModbusDevice::Error) : void
+    - onErrorOccurred(error) : void
     - sendReadRequest(startAddr, count) : void
+    - sendWriteRequest(regAddr, value) : void
 }
 
 ' ============================================================
@@ -74,31 +79,94 @@ class ModbusSerialClient {
 ' ============================================================
 
 class DataCollector {
-    - m_cache : DataCache*
-    - m_alarms : AlarmEngine*
+    - m_alarms : AlarmEngine*        ' owned child
+    - m_history : HistoryStore*      ' owned child (SQLite)
+    - m_queue : SampleQueue          ' producer→consumer, 有界 4096
     - m_devices : QList~DeviceInfo~
     - m_ctx : QVector~DeviceContext*~
-    - m_pollTimer : QTimer
+    - m_pollTimer : QTimer*          ' QObject 子对象（随 moveToThread 迁移）
     ..
-    + loadConfig(jsonPath : QString) : bool
+    + loadConfig(jsonPath) : bool
     + connectAll() : void
     + disconnectAll() : void
-    + startPolling(intervalMs : int) : void
+    + writeRegister(deviceIndex, regAddr, value : quint16) : void
+    + startPolling(intervalMs = 100) : void
     + stopPolling() : void
-    + isDeviceConnected(index) : bool
-    + isDeviceOnline(index) : bool
-    + failureCount(index) : int
+    + queue() : SampleQueue*
+    + alarmEngine() : AlarmEngine*
+    + historyStore() : HistoryStore*
+    + historySamples() : qint64
     ..
     signals
     __deviceConnectionChanged__(deviceIndex, connected)
     __deviceOnlineChanged__(deviceIndex, online)
-    __statusMessage__(msg : QString)
+    __deviceFailCountChanged__(deviceIndex, count)
+    __pollingStateChanged__(active)
+    __statusMessage__(msg)
+    __configLoaded__()
+    __writeFinished__(deviceIndex, ok, msg)
     ..
     notes
-      * IModbusClient 由工厂按 connType 创建（Tcp/Serial）
+      * 整对象 moveToThread 到专用 QThread；GUI 绝不直读其状态
       * 三态状态机：链路建立(connected) ≠ 有响应(online)
-      * 轮询每 100ms；请求在驱动内串行化
-      * regAddr 范围由通道 min/max 地址推出
+      * 100ms 轮询 = 心跳；3s 无响应判离线；指数退避 500ms·2^n 封顶 30s
+      * 每设备 LinkState{Active,Reconnecting} + manualDisconnect
+      * writeRegister 经 m_pendingWrite 在驱动内延迟补发（read 在途不丢写）
+    end notes
+}
+
+class HistoryStore {
+    - m_dbPath : QString
+    - m_flushTimer : QTimer*         ' QObject 子对象
+    - m_dbOpen : bool
+    - m_failed : bool
+    - m_totalSamples : atomic~qint64~
+    - m_devIdx/regAddr/ts/val : QVector~QVariant~   ' 采样缓冲（列并行）
+    - m_alarmTs/Sev/Dev/Msg : QVector~QVariant~     ' 报警缓冲
+    ..
+    + start() : void
+    + addSample(deviceIndex, regAddr, tsMs, value) : void
+    + addAlarm(rec : AlarmRecord) : void
+    + flush() : bool
+    + totalSamples() : qint64
+    + querySamples(requestId, deviceIndex, q : HistoryQuery) : void   ' worker 线程
+    + queryAlarms(requestId, deviceIndex, startMs, endMs) : void
+    ..
+    signals
+    __samplesReady__(requestId, deviceIndex, rows : HistoryResult)
+    __alarmsReady__(requestId, deviceIndex, alarms : QVector~AlarmRecord~)
+    ..
+    notes
+      * 懒打开 <exe>/data/history.db；表 samples / alarms + (device_index,ts) 索引
+      * 512 行 或 1s 单事务 execBatch 落盘；查询 LIMIT 20万
+      * 与写入同线程（worker），读写天然串行
+    end notes
+}
+
+class SampleQueue {
+    - m_mutex : QMutex
+    - m_items : deque~Sample~
+    - m_capacity : size_t = 4096
+    ..
+    + push(s : Sample) : void        ' 生产（采集线程）
+    + tryPop(out : Sample) : bool    ' 消费（GUI 线程）
+    + size() : int
+    ..
+    notes
+      满则丢最旧——实时曲线只要最新数据
+    end notes
+}
+
+class AlarmEngine {
+    - m_states : QHash~int, QHash~int, Status~~   ' deviceIndex → (regAddr → status)
+    ..
+    + checkValue(deviceIndex, ch : Channel, value) : void
+    ..
+    signals
+    __newAlarm__(record : AlarmRecord)
+    ..
+    notes
+      边沿检测 Normal/High/Low；越限触发 Critical/Warning，恢复触发 Info
     end notes
 }
 
@@ -114,11 +182,12 @@ class DataCache {
     + value(deviceIndex, regAddr) : double
     + hasValue(deviceIndex, regAddr) : bool
     + tableModel() : DataCacheModel*
+    + currentChannels() : QList~Channel~
     ..
     signals
     __devicesChanged__()
     __currentDeviceChanged__(deviceIndex)
-    __valueChanged__(deviceIndex, regAddr, value)
+    __valueChanged__(deviceIndex, regAddr, value, tsMs)
 }
 
 class DataCacheModel {
@@ -127,25 +196,10 @@ class DataCacheModel {
     + data(index, role) : QVariant
     + headerData(section, orientation, role) : QVariant
     + notifyRowsReset() : void
+    + valueUpdated(regAddr) : void    ' 只刷新受影响行
     ..
     columns
       通道 / 当前值 / 单位 / 状态
-}
-
-class AlarmEngine {
-    - m_states : QHash~int, QHash~int, Status~~
-    - m_history : QVector~AlarmRecord~
-    ..
-    + checkValue(deviceIndex, ch : Channel, value : double) : void
-    + history() : QVector~AlarmRecord~
-    ..
-    signals
-    __newAlarm__(record : AlarmRecord)
-    ..
-    notes
-      状态机 Normal / High / Low，越限触发、恢复触发；
-      m_history 上限 kMaxHistory = 1000
-    end notes
 }
 
 ' ============================================================
@@ -153,60 +207,129 @@ class AlarmEngine {
 ' ============================================================
 
 class MainViewModel {
-    - m_collector : DataCollector*
-    - m_cache : DataCache*
+    - m_collector : DataCollector*   ' worker 线程（无父对象）
+    - m_cache : DataCache*           ' GUI 线程
     - m_model : DataCacheModel*
-    - m_alarms : AlarmEngine*
+    - m_worker : QThread*
+    - m_drainTimer : QTimer*         ' 50ms 批量排空队列
+    - m_status : QVector~DeviceStatus~
+    - m_alarmHistory : QVector~AlarmRecord~   ' 封顶 1000
+    - m_historyRequestSeq : int
     ..
     + dataModel() : QAbstractTableModel*
     + alarms() : QVector~AlarmRecord~
+    + deviceConnected/deviceOnline/deviceFailureCount(idx) : bool/int
+    + historySamples() : qint64
     + loadConfig(jsonPath) : void
     + connectToDevice() : void
     + disconnectFromDevice() : void
     + switchDevice(deviceIndex) : void
+    + queryHistory(deviceIndex, q : HistoryQuery) : int   ' 返回 requestId
+    + queryAlarms(deviceIndex, startMs, endMs) : int
+    + writeRegister(deviceIndex, regAddr, value : quint16) : void
     ..
     signals
     __deviceConnectionChanged__(deviceIndex, connected)
     __deviceOnlineChanged__(deviceIndex, online)
-    __statusTextChanged__(msg : QString)
+    __statusTextChanged__(msg)
     __newAlarm__(record : AlarmRecord)
+    __historySamplesReady__(requestId, deviceIndex, rows : HistoryResult)
+    __historyAlarmsReady__(requestId, deviceIndex, alarms)
+    __writeFinished__(deviceIndex, ok, msg)
+    ..
+    slots
+    - drainSamples() : void
+    ..
+    notes
+      MVVM：跨线程命令经 QMetaObject::invokeMethod（loadConfig 阻塞式，
+      其余排队）；值走队列、状态走信号，GUI 不直读 collector
+    end notes
 }
 
 class MainWindow {
     - m_viewModel : MainViewModel*
-    - m_simulator : SimulatedModbusServer*   ' TCP @ 1502
-    - m_simulator2 : SimulatedModbusServer*  ' TCP @ 1503
-    - m_serialSim : SimulatedSerialServer*   ' 串口 COM6
+    - m_simulator : SimulatedModbusServer*    ' TCP @ 1502
+    - m_simulator2 : SimulatedModbusServer*   ' TCP @ 1503
+    - m_serialSim : SimulatedSerialServer*    ' 串口 COM6
     - m_deviceTree : QTreeWidget*
     - m_dataTable : QTableView*
     - m_curvePanel : CurvePanel*
     - m_alarmTable : QTableWidget*
     - m_statusLabel : QLabel*
+    - m_historyPanel : HistoryPanel*
+    - m_historyDock : QDockWidget*
     ..
     + startSimulatorAutomatically() : bool
     + loadConfiguration(jsonPath) : void
     + connectToDevice() : void
     + runSelfTest(outPath) : void
+    + runSelfTestReconnect(outPath) : void
+    + runSelfTestHistory(outPath) : void
+    + runSelfTestWrite(outPath) : void
     ..
     slots
     - toggleSimulator() : void
     - updateDeviceStatus() : void
+    - openWriteRegisterDialog(initialRegAddr = -1) : void
+    - appendAlarmRow(time, severity, device, message) : void
 }
 
 class CurvePanel {
-    - m_chart : QChart*
-    - m_axisX : QDateTimeAxis*
-    - m_axisY : QValueAxis*
-    - m_series : QHash~int, QLineSeries*~
+    - m_plot : QCustomPlot*
+    - m_axisX : QCPAxis*             ' QCPAxisTickerDateTime（秒→时钟）
+    - m_axisY : QCPAxis*
+    - m_graphs : QHash~int, QCPGraph*~   ' regAddr → graph
     - m_windowSeconds : int = 60
     ..
     + setChannels(channels) : void
-    + addPoint(regAddr, value) : void
+    + addPoint(regAddr, value, tsMs) : void
     + clear() : void
     + setWindowSeconds(seconds) : void
     ..
     slots
-    - refreshAxis() : void
+    - onUiTick() : void              ' 50ms 滚动时间窗 + 剔除过期 + 自适应 Y
+}
+
+class HistoryPanel {
+    - m_vm : MainViewModel*
+    - m_devices : QList~DeviceInfo~
+    - m_graphs : QHash~int, QCPGraph*~
+    - m_lastSamples : HistoryResult
+    - m_lastAlarms : QVector~AlarmRecord~
+    - m_pendingSampleReq / m_pendingAlarmReq : int
+    - m_queryStartMs / m_queryEndMs : qint64
+    ..
+    + setDevices(devices) : void
+    ..
+    slots
+    - onDeviceChanged(index) : void
+    - applyQuery() : void
+    - onSamplesReady(requestId, deviceIndex, rows) : void
+    - onAlarmsReady(requestId, deviceIndex, alarms) : void
+    ..
+    notes
+      设备/通道(勾选)/时间范围(5/15/60分快捷+起止) → 异步查询；
+      Tab1 采样曲线（QCustomPlot 静态回放），Tab2 报警历史；
+      导出 CSV（UTF-8 BOM）；按 requestId+设备索引丢弃过期结果
+    end notes
+}
+
+class AlarmTableModel {
+    + setAlarms(alarms, deviceName) : void
+    + rowCount / columnCount / data / headerData
+    ..
+    columns
+      时间 / 级别 / 设备 / 信息
+}
+
+class WriteRegisterDialog {
+    + deviceIndex() : int
+    + regAddr() : int
+    + value() : quint16
+    ..
+    - m_deviceCombo : QComboBox*
+    - m_regSpin : QSpinBox*
+    - m_valueSpin : QSpinBox*
 }
 
 ' ============================================================
@@ -217,26 +340,30 @@ class SimulatedDevice {
     - m_timer : QTimer
     - m_registers : QVector~quint16~
     - m_waveConfigs : QVector~WaveConfig~
+    - m_elapsedMs : qint64
     ..
     + setRegisterCount(count) : void
     + setWaveConfig(regAddr, cfg : WaveConfig) : void
-    + start() : void
-    + stop() : void
+    + setUpdateInterval(intervalMs) : void
+    + start() / stop() / isRunning() : bool
     + rawRegister(addr) : quint16
     + realValue(addr) : double
+    + registerCount() : int
     ..
     signals
     __registersUpdated__()
     ..
     notes
-      real = base + amplitude*sin(2π·freq·t) + noise
-      raw  = clamp(round(real*scale), 0, 65535)
+      real = base + amplitude*sin(2π·freq·t) + noise；raw = clamp(round(real*scale))
+      20Hz tick；全部寄存器会被覆盖（除非被遥控写入覆盖）
     end notes
 }
 
 class SimulatedModbusServer {
     - m_device : SimulatedDevice*
-    - m_server : QModbusServer*   ' QModbusTcpServer
+    - m_server : QModbusServer*      ' QModbusTcpServer
+    - m_overrides : QHash~int, quint16~   ' 遥控写入保持
+    - m_pushing : bool               ' 重入标志（setData 也发 dataWritten）
     ..
     + start(port, host) : bool
     + stop() : void
@@ -245,11 +372,18 @@ class SimulatedModbusServer {
     ..
     slots
     - pushRegistersToModbus() : void
+    ..
+    notes
+      dataWritten 只带 (table,address,size) 无值 → 从服务器内部 data() 读回；
+      m_pushing 区分"自己的波形 push"与"上位机写入"
+    end notes
 }
 
 class SimulatedSerialServer {
     - m_device : SimulatedDevice*
-    - m_server : QModbusServer*   ' QModbusRtuSerialServer
+    - m_server : QModbusServer*      ' QModbusRtuSerialServer
+    - m_overrides : QHash~int, quint16~
+    - m_pushing : bool
     ..
     + start(portName, baudRate) : bool
     + stop() : void
@@ -296,6 +430,31 @@ class AlarmRecord <<struct>> {
     + acknowledged : bool = false
 }
 
+class Sample <<struct>> {
+    + deviceIndex : int
+    + regAddr : int
+    + value : double
+    + tsMs : qint64
+}
+
+class HistoryRow <<struct>> {
+    + regAddr : int
+    + tsMs : qint64
+    + value : double
+}
+
+class HistoryQuery <<struct>> {
+    + regAddrs : QVector~int~    ' 空 = 全部通道
+    + startMs : qint64
+    + endMs : qint64
+}
+
+class HistoryResult <<struct>> {
+    + requestId : int
+    + deviceIndex : int
+    + rows : QVector~HistoryRow~ ' 按 ts 升序
+}
+
 enum ConnType {
     Tcp
     Serial
@@ -316,13 +475,16 @@ IModbusClient <|-- ModbusTcpClient
 IModbusClient <|-- ModbusSerialClient
 
 QObject <|-- DataCollector
+QObject <|-- HistoryStore
+QObject <|-- AlarmEngine
 QObject <|-- DataCache
 QAbstractTableModel <|-- DataCacheModel
-QObject <|-- AlarmEngine
-
 QObject <|-- MainViewModel
 QMainWindow <|-- MainWindow
-QChartView <|-- CurvePanel
+QWidget <|-- CurvePanel
+QWidget <|-- HistoryPanel
+QAbstractTableModel <|-- AlarmTableModel
+QDialog <|-- WriteRegisterDialog
 
 QObject <|-- SimulatedDevice
 QObject <|-- SimulatedModbusServer
@@ -334,13 +496,22 @@ QObject <|-- SimulatedSerialServer
 
 MainViewModel *-- "1" DataCollector
 MainViewModel *-- "1" DataCache
-MainViewModel *-- "1" AlarmEngine
+MainViewModel *-- "1" DataCacheModel
 DataCache *-- "1" DataCacheModel
+
+DataCollector *-- "1" AlarmEngine
+DataCollector *-- "1" HistoryStore
+DataCollector *-- "1" SampleQueue
+DataCollector *-- "n" IModbusClient : factory
+DataCollector *-- "n" DeviceContext
 
 MainWindow *-- "1" MainViewModel
 MainWindow *-- "1" CurvePanel
+MainWindow *-- "1" HistoryPanel
 MainWindow *-- "2" SimulatedModbusServer
 MainWindow *-- "1" SimulatedSerialServer
+
+HistoryPanel *-- "1" AlarmTableModel
 
 SimulatedModbusServer *-- "1" SimulatedDevice
 SimulatedSerialServer *-- "1" SimulatedDevice
@@ -349,20 +520,26 @@ SimulatedSerialServer *-- "1" SimulatedDevice
 ' DEPENDENCY (holds pointer, does not own)
 ' ============================================================
 
-DataCollector *-- "n" IModbusClient : factory
-DataCollector ..> DataCache : <<uses>>
-DataCollector ..> AlarmEngine : <<uses>>
 DataCollector ..> DeviceInfo : <<uses>>
 DataCollector ..> Channel : <<uses>>
-
-MainWindow ..> MainViewModel : <<uses>>
-MainWindow ..> Channel : <<uses>>
-CurvePanel ..> Channel : <<uses>>
-
+DataCollector ..> Sample : <<uses>>
+HistoryStore ..> HistoryQuery : <<uses>>
+HistoryStore ..> HistoryResult : <<uses>>
+HistoryStore ..> HistoryRow : <<uses>>
+HistoryStore ..> AlarmRecord : <<uses>>
 AlarmEngine ..> AlarmRecord
 AlarmRecord ..> Severity
 DeviceInfo ..> Channel
 DeviceInfo ..> ConnType
+MainViewModel ..> HistoryQuery : <<uses>>
+MainViewModel ..> HistoryResult : <<uses>>
+HistoryPanel ..> HistoryResult : <<uses>>
+HistoryPanel ..> MainViewModel : <<uses>>
+MainWindow ..> MainViewModel : <<uses>>
+MainWindow ..> Channel : <<uses>>
+CurvePanel ..> Channel : <<uses>>
+HistoryPanel ..> Channel : <<uses>>
+WriteRegisterDialog ..> DeviceInfo : <<uses>>
 
 ' ============================================================
 ' SIGNAL-SLOT CONNECTIONS
@@ -372,13 +549,20 @@ IModbusClient --> DataCollector : connectionStateChanged\n→ onConnectionChange
 IModbusClient --> DataCollector : registersRead\n→ onRegistersRead
 IModbusClient --> DataCollector : communicationError\n→ onCommError
 
-DataCollector --> DataCache : value\n→ updateValue
-DataCollector --> AlarmEngine : value\n→ checkValue
-AlarmEngine --> MainViewModel : newAlarm\n→ newAlarm
-DataCollector --> MainViewModel : deviceConnectionChanged / deviceOnlineChanged / statusMessage
+DataCollector --> SampleQueue : push (producer)
+DataCollector --> HistoryStore : addSample / addAlarm
+DataCollector --> AlarmEngine : checkValue
+AlarmEngine --> HistoryStore : newAlarm → addAlarm
+AlarmEngine --> MainViewModel : newAlarm
+HistoryStore --> MainViewModel : samplesReady / alarmsReady
+DataCollector --> MainViewModel : deviceConnectionChanged / deviceOnlineChanged\n/ statusMessage / writeFinished
+DataCollector --> MainViewModel : configLoaded
 
-DataCache --> MainWindow : devicesChanged\n→ 重建硬件列表
-DataCache --> MainWindow : currentDeviceChanged\n→ 表格标题 + 曲线重建
-DataCache --> MainWindow : valueChanged\n→ CurvePanel::addPoint
+MainViewModel --> DataCache : drainSamples → updateValue
+DataCache --> MainWindow : devicesChanged → 重建硬件列表 + HistoryPanel::setDevices
+DataCache --> MainWindow : currentDeviceChanged → 表格标题 + 曲线重建
+DataCache --> MainWindow : valueChanged → CurvePanel::addPoint
+MainViewModel --> HistoryPanel : historySamplesReady / historyAlarmsReady
+MainViewModel --> MainWindow : writeFinished → 状态栏
 
 @enduml
