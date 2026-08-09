@@ -77,6 +77,9 @@ set(SOURCES
     core/alarm_engine.cpp
     core/data_collector.h
     core/data_collector.cpp
+    core/history_store.h
+    core/history_store.cpp
+    core/sample_queue.h
     core/types.h
     simulator/simulated_device.h
     simulator/simulated_device.cpp
