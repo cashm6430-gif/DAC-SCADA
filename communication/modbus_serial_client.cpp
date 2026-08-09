@@ -87,6 +87,7 @@ void ModbusSerialClient::sendReadRequest(int startAddr, int count)
 {
     QModbusDataUnit unit(QModbusDataUnit::HoldingRegisters, startAddr, count);
 
+    m_pendingReadRequest = true;
     m_pendingReply = m_client->sendReadRequest(unit, m_unitId);
     if (!m_pendingReply) {
         emit communicationError(tr("发送 Modbus 请求失败: %1")
@@ -109,6 +110,7 @@ void ModbusSerialClient::writeSingleRegister(int regAddr, quint16 value)
     QModbusDataUnit unit(QModbusDataUnit::HoldingRegisters, regAddr, 1);
     unit.setValue(0, value);
 
+    m_pendingReadRequest = false;
     m_pendingReply = m_client->sendWriteRequest(unit, m_unitId);
     if (!m_pendingReply) {
         emit communicationError(tr("发送 Modbus 写入失败: %1")
@@ -149,7 +151,8 @@ void ModbusSerialClient::onReplyFinished()
     const auto result = reply->result();
     reply->deleteLater();
 
-    if (result.isValid() && result.registerType() == QModbusDataUnit::HoldingRegisters)
+    if (result.isValid() && m_pendingReadRequest
+        && result.registerType() == QModbusDataUnit::HoldingRegisters)
         emit registersRead(result);
 }
 

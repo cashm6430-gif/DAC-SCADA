@@ -43,6 +43,10 @@ private:
     int      m_baudRate = 9600;
     int      m_unitId = 1;
     QModbusReply *m_pendingReply = nullptr;
+    /// What the in-flight request was — a write echo must not be reported as
+    /// register data (it would feed the cache/alarm engine with the written
+    /// value as if it were a fresh reading).
+    bool m_pendingReadRequest = false;
 };
 
 #endif // MODBUS_SERIAL_CLIENT_H
