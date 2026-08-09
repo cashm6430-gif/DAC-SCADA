@@ -19,8 +19,10 @@ int main(int argc, char *argv[])
 
     window.show();
 
-    // 命令行 --sim：自动启动模拟下位机，并稍后自动连接，便于演示/自动化测试
-    if (app.arguments().contains(QStringLiteral("--sim"))) {
+    // 命令行 --sim：自动启动模拟下位机，并稍后自动连接，便于演示/自动化测试。
+    // --selftest 会在内部 500ms 后自行连接，故此处跳过，避免重复 connectAll()。
+    if (app.arguments().contains(QStringLiteral("--sim"))
+        && !app.arguments().contains(QStringLiteral("--selftest"))) {
         window.startSimulatorAutomatically();
         QTimer::singleShot(500, &window, &MainWindow::connectToDevice);
     }

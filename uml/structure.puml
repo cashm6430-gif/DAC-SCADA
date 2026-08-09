@@ -1,182 +1,304 @@
 @startuml
-title DAC-SCADA — Class Diagram
+title DAC-SCADA — Class Diagram (current)
 
 skinparam classAttributeIconSize 0
 
 ' ============================================================
-' ABSTRACT INTERFACE
+' ABSTRACT INTERFACE (communication layer)
 ' ============================================================
 
-abstract class CommInterface {
-    + {abstract} open() : bool
-    + {abstract} close() : void
-    + {abstract} isOpen() : bool
-    + {abstract} write(data : QByteArray) : qint64
-    + {abstract} name() : QString
+abstract class IModbusClient {
+    + {abstract} connectTo(info : DeviceInfo) : bool
+    + {abstract} disconnectFrom() : void
+    + {abstract} isConnected() : bool
+    + {abstract} readHoldingRegisters(startAddr, count) : void
+    + {abstract} writeSingleRegister(regAddr, value : quint16) : void
     ..
     signals
-    __dataReceived__(data : QByteArray)
-    __errorOccurred__(msg : QString)
-    __stateChanged__(connected : bool)
+    __connectionStateChanged__(connected : bool)
+    __registersRead__(unit : QModbusDataUnit)
+    __communicationError__(msg : QString)
 }
 
 ' ============================================================
-' COMMUNICATION LAYER
+' TRANSPORT DRIVERS
 ' ============================================================
 
-class SerialPortComm {
-    - m_serial : QSerialPort*
+class ModbusTcpClient {
+    - m_client : QModbusTcpClient*
+    - m_host : QString
+    - m_port : quint16 = 502
+    - m_unitId : int = 1
+    - m_pendingReply : QModbusReply*
+    ..
+    + connectTo(info) : bool
+    + disconnectFrom() : void
+    + isConnected() : bool
+    + readHoldingRegisters(startAddr, count) : void
+    + writeSingleRegister(regAddr, value) : void
+    + host() : QString
+    + port() : quint16
+    + unitId() : int
+    ..
+    slots
+    - onStateChanged(state : QModbusDevice::State) : void
+    - onReplyFinished() : void
+    - onErrorOccurred(error : QModbusDevice::Error) : void
+    - sendReadRequest(startAddr, count) : void
+}
+
+class ModbusSerialClient {
+    - m_client : QModbusRtuSerialClient*
     - m_portName : QString
     - m_baudRate : int = 9600
-    - m_dataBits : QSerialPort::DataBits
-    - m_parity : QSerialPort::Parity
-    - m_stopBits : QSerialPort::StopBits
+    - m_unitId : int = 1
+    - m_pendingReply : QModbusReply*
     ..
-    + setPortName(name : QString) : void
-    + setBaudRate(rate : int) : void
+    + connectTo(info) : bool
+    + disconnectFrom() : void
+    + isConnected() : bool
+    + readHoldingRegisters(startAddr, count) : void
+    + writeSingleRegister(regAddr, value) : void
     + portName() : QString
-    + open() : bool
-    + close() : void
-    + isOpen() : bool
-    + write(data : QByteArray) : qint64
-    + name() : QString
+    + unitId() : int
     ..
     slots
-    - onReadyRead() : void
-    - onErrorOccurred(error) : void
-}
-
-class ModbusRtu {
-    - m_client : QModbusRtuSerialClient*
-    - m_serial : SerialPortComm*
-    ..
-    + open() : bool
-    + close() : void
-    + isOpen() : bool
-    + write(data : QByteArray) : qint64
-    + name() : QString
-    + readHoldingRegisters(deviceAddr, startAddr, count) : void
-    + readInputRegisters(deviceAddr, startAddr, count) : void
-    + readCoils(deviceAddr, startAddr, count) : void
-    + writeSingleRegister(deviceAddr, regAddr, value) : void
-    + writeMultipleRegisters(deviceAddr, startAddr, values) : void
-    ..
-    signals
-    __registersRead__(deviceAddr : int, unit : QModbusDataUnit)
-    __registerWritten__(deviceAddr : int, regAddr : int)
-    __modbusError__(deviceAddr : int, msg : QString)
-    ..
-    slots
-    - onReadReady() : void
-    - onWriteReady() : void
+    - onStateChanged(state : QModbusDevice::State) : void
+    - onReplyFinished() : void
+    - onErrorOccurred(error : QModbusDevice::Error) : void
+    - sendReadRequest(startAddr, count) : void
 }
 
 ' ============================================================
 ' CORE LAYER
 ' ============================================================
 
-class DeviceManager {
-    - m_modbus : ModbusRtu*
-    - m_devices : QVector~DeviceInfo~
+class DataCollector {
+    - m_cache : DataCache*
+    - m_alarms : AlarmEngine*
+    - m_devices : QList~DeviceInfo~
+    - m_ctx : QVector~DeviceContext*~
     - m_pollTimer : QTimer
-    - m_activeIndex : int = -1
     ..
-    + scan() : void
-    + setActiveDevice(index : int) : void
-    + startPolling(intervalMs : int = 1000) : void
+    + loadConfig(jsonPath : QString) : bool
+    + connectAll() : void
+    + disconnectAll() : void
+    + startPolling(intervalMs : int) : void
     + stopPolling() : void
-    + devices() : QVector~DeviceInfo~
+    + isDeviceConnected(index) : bool
+    + isDeviceOnline(index) : bool
+    + failureCount(index) : int
     ..
     signals
-    __deviceDiscovered__(info : DeviceInfo)
-    __deviceDataChanged__(deviceAddr, registerAddr : int, value : double)
-    __alarmTriggered__(deviceAddr : int, msg : QString)
+    __deviceConnectionChanged__(deviceIndex, connected)
+    __deviceOnlineChanged__(deviceIndex, online)
+    __statusMessage__(msg : QString)
     ..
-    slots
-    - onPollTimeout() : void
-    - onRegistersRead(deviceAddr : int, unit : QModbusDataUnit) : void
+    notes
+      * IModbusClient 由工厂按 connType 创建（Tcp/Serial）
+      * 三态状态机：链路建立(connected) ≠ 有响应(online)
+      * 轮询每 100ms；请求在驱动内串行化
+      * regAddr 范围由通道 min/max 地址推出
+    end notes
 }
 
 class DataCache {
-    - m_values : QHash~DataKey, double~
+    - m_devices : QList~DeviceInfo~
+    - m_values : QHash~int, QHash~int, double~~
+    - m_currentDevice : int = 0
     - m_model : DataCacheModel*
     ..
+    + setDevices(devices) : void
+    + setCurrentDevice(deviceIndex) : void
+    + currentDevice() : int
+    + value(deviceIndex, regAddr) : double
+    + hasValue(deviceIndex, regAddr) : bool
     + tableModel() : DataCacheModel*
-    + updateValue(deviceAddr : int, registerAddr : int, value : double)
     ..
     signals
-    __valueChanged__(key : DataKey, value : double)
+    __devicesChanged__()
+    __currentDeviceChanged__(deviceIndex)
+    __valueChanged__(deviceIndex, regAddr, value)
 }
 
 class DataCacheModel {
-    + rowCount(parent = QModelIndex{}) : int
-    + columnCount(parent = QModelIndex{}) : int
-    + data(index : QModelIndex, role : int) : QVariant
-    + headerData(section, orientation : int, role : int) : QVariant
-    + setData(rows) : void
+    + rowCount(parent) : int
+    + columnCount(parent) : int
+    + data(index, role) : QVariant
+    + headerData(section, orientation, role) : QVariant
+    + notifyRowsReset() : void
+    ..
+    columns
+      通道 / 当前值 / 单位 / 状态
 }
 
 class AlarmEngine {
-    - m_active : QVector~AlarmRecord~
+    - m_states : QHash~int, QHash~int, Status~~
     - m_history : QVector~AlarmRecord~
     ..
-    + activeAlarms() : QVector~AlarmRecord~
+    + checkValue(deviceIndex, ch : Channel, value : double) : void
     + history() : QVector~AlarmRecord~
-    + onAlarmTriggered(deviceAddr : int, msg : QString)
-    + acknowledgeAlarm(index : int) : void
     ..
     signals
     __newAlarm__(record : AlarmRecord)
-    __alarmAcknowledged__(index : int)
+    ..
+    notes
+      状态机 Normal / High / Low，越限触发、恢复触发；
+      m_history 上限 kMaxHistory = 1000
+    end notes
 }
 
 ' ============================================================
 ' UI LAYER
 ' ============================================================
 
-class MainWindow {
-    - m_serial : SerialPortComm*
-    - m_modbus : ModbusRtu*
-    - m_deviceMgr : DeviceManager*
+class MainViewModel {
+    - m_collector : DataCollector*
     - m_cache : DataCache*
+    - m_model : DataCacheModel*
     - m_alarms : AlarmEngine*
     ..
-    + setupUi() : void
-    + setupConnections() : void
-    + createStatusBar() : void
+    + dataModel() : QAbstractTableModel*
+    + alarms() : QVector~AlarmRecord~
+    + loadConfig(jsonPath) : void
+    + connectToDevice() : void
+    + disconnectFromDevice() : void
+    + switchDevice(deviceIndex) : void
+    ..
+    signals
+    __deviceConnectionChanged__(deviceIndex, connected)
+    __deviceOnlineChanged__(deviceIndex, online)
+    __statusTextChanged__(msg : QString)
+    __newAlarm__(record : AlarmRecord)
+}
+
+class MainWindow {
+    - m_viewModel : MainViewModel*
+    - m_simulator : SimulatedModbusServer*   ' TCP @ 1502
+    - m_simulator2 : SimulatedModbusServer*  ' TCP @ 1503
+    - m_serialSim : SimulatedSerialServer*   ' 串口 COM6
+    - m_deviceTree : QTreeWidget*
+    - m_dataTable : QTableView*
+    - m_curvePanel : CurvePanel*
+    - m_alarmTable : QTableWidget*
+    - m_statusLabel : QLabel*
+    ..
+    + startSimulatorAutomatically() : bool
+    + loadConfiguration(jsonPath) : void
+    + connectToDevice() : void
+    + runSelfTest(outPath) : void
     ..
     slots
-    - onConnectClicked() : void
-    - onDisconnectClicked() : void
-    - onRefreshDevices() : void
-    - onDeviceSelected(index : int) : void
-    - updateConnectionState(connected : bool) : void
+    - toggleSimulator() : void
+    - updateDeviceStatus() : void
+}
+
+class CurvePanel {
+    - m_chart : QChart*
+    - m_axisX : QDateTimeAxis*
+    - m_axisY : QValueAxis*
+    - m_series : QHash~int, QLineSeries*~
+    - m_windowSeconds : int = 60
+    ..
+    + setChannels(channels) : void
+    + addPoint(regAddr, value) : void
+    + clear() : void
+    + setWindowSeconds(seconds) : void
+    ..
+    slots
+    - refreshAxis() : void
 }
 
 ' ============================================================
-' DATA STRUCTURES
+' SIMULATOR LAYER
 ' ============================================================
+
+class SimulatedDevice {
+    - m_timer : QTimer
+    - m_registers : QVector~quint16~
+    - m_waveConfigs : QVector~WaveConfig~
+    ..
+    + setRegisterCount(count) : void
+    + setWaveConfig(regAddr, cfg : WaveConfig) : void
+    + start() : void
+    + stop() : void
+    + rawRegister(addr) : quint16
+    + realValue(addr) : double
+    ..
+    signals
+    __registersUpdated__()
+    ..
+    notes
+      real = base + amplitude*sin(2π·freq·t) + noise
+      raw  = clamp(round(real*scale), 0, 65535)
+    end notes
+}
+
+class SimulatedModbusServer {
+    - m_device : SimulatedDevice*
+    - m_server : QModbusServer*   ' QModbusTcpServer
+    ..
+    + start(port, host) : bool
+    + stop() : void
+    + isListening() : bool
+    + device() : SimulatedDevice*
+    ..
+    slots
+    - pushRegistersToModbus() : void
+}
+
+class SimulatedSerialServer {
+    - m_device : SimulatedDevice*
+    - m_server : QModbusServer*   ' QModbusRtuSerialServer
+    ..
+    + start(portName, baudRate) : bool
+    + stop() : void
+    + isListening() : bool
+    + device() : SimulatedDevice*
+    ..
+    slots
+    - pushRegistersToModbus() : void
+}
+
+' ============================================================
+' DATA STRUCTURES (core/types.h)
+' ============================================================
+
+class Channel <<struct>> {
+    + unit : QString
+    + name : QString
+    + regAddr : quint16
+    + color : QColor
+    + upperLimit : double
+    + lowerLimit : double
+    + scale : double = 1.0
+    + offset : double = 0.0
+}
 
 class DeviceInfo <<struct>> {
-    + address : int
+    + address : qint16 = 1
     + name : QString
     + type : QString
-    + online : bool
-}
-
-class DataKey <<struct>> {
-    + deviceAddr : int
-    + registerAddr : int
-    ..
-    + operator==(other : DataKey) : bool
+    + connType : ConnType = Tcp
+    + ip : QString
+    + port : quint16 = 502
+    + serialPort : QString
+    + baudRate : int = 9600
+    + online : bool = false
+    + channels : QList~Channel~
 }
 
 class AlarmRecord <<struct>> {
+    + deviceAddr : qint16 = 0
     + timestamp : QDateTime
-    + deviceAddr : int
     + message : QString
     + severity : Severity
-    + acknowledged : bool
+    + acknowledged : bool = false
+}
+
+enum ConnType {
+    Tcp
+    Serial
 }
 
 enum Severity {
@@ -189,54 +311,74 @@ enum Severity {
 ' INHERITANCE
 ' ============================================================
 
-QObject <|-- CommInterface
-CommInterface <|-- SerialPortComm
-CommInterface <|-- ModbusRtu
+QObject <|-- IModbusClient
+IModbusClient <|-- ModbusTcpClient
+IModbusClient <|-- ModbusSerialClient
 
-QObject <|-- DeviceManager
+QObject <|-- DataCollector
 QObject <|-- DataCache
-QObject <|-- AlarmEngine
 QAbstractTableModel <|-- DataCacheModel
-QObject <|-- DataCacheModel
+QObject <|-- AlarmEngine
 
+QObject <|-- MainViewModel
 QMainWindow <|-- MainWindow
+QChartView <|-- CurvePanel
+
+QObject <|-- SimulatedDevice
+QObject <|-- SimulatedModbusServer
+QObject <|-- SimulatedSerialServer
 
 ' ============================================================
-' COMPOSITION (MainWindow owns all subsystems)
+' COMPOSITION (owner *-- owned)
 ' ============================================================
 
-MainWindow *-- "1" SerialPortComm
-MainWindow *-- "1" ModbusRtu
-MainWindow *-- "1" DeviceManager
-MainWindow *-- "1" DataCache
-MainWindow *-- "1" AlarmEngine
-
+MainViewModel *-- "1" DataCollector
+MainViewModel *-- "1" DataCache
+MainViewModel *-- "1" AlarmEngine
 DataCache *-- "1" DataCacheModel
+
+MainWindow *-- "1" MainViewModel
+MainWindow *-- "1" CurvePanel
+MainWindow *-- "2" SimulatedModbusServer
+MainWindow *-- "1" SimulatedSerialServer
+
+SimulatedModbusServer *-- "1" SimulatedDevice
+SimulatedSerialServer *-- "1" SimulatedDevice
 
 ' ============================================================
 ' DEPENDENCY (holds pointer, does not own)
 ' ============================================================
 
-ModbusRtu ..> SerialPortComm : <<uses>>
-DeviceManager ..> ModbusRtu : <<uses>>
+DataCollector *-- "n" IModbusClient : factory
+DataCollector ..> DataCache : <<uses>>
+DataCollector ..> AlarmEngine : <<uses>>
+DataCollector ..> DeviceInfo : <<uses>>
+DataCollector ..> Channel : <<uses>>
 
-' ============================================================
-' ASSOCIATION (data types)
-' ============================================================
+MainWindow ..> MainViewModel : <<uses>>
+MainWindow ..> Channel : <<uses>>
+CurvePanel ..> Channel : <<uses>>
 
-DeviceManager ..> DeviceInfo
-DeviceManager ..> ModbusRtu
-DataCache ..> DataKey
 AlarmEngine ..> AlarmRecord
 AlarmRecord ..> Severity
+DeviceInfo ..> Channel
+DeviceInfo ..> ConnType
 
 ' ============================================================
 ' SIGNAL-SLOT CONNECTIONS
 ' ============================================================
 
-SerialPortComm --> MainWindow : stateChanged\n→ updateConnectionState
-ModbusRtu --> DeviceManager : registersRead\n→ onRegistersRead
-DeviceManager --> DataCache : deviceDataChanged\n→ updateValue
-DeviceManager --> AlarmEngine : alarmTriggered\n→ onAlarmTriggered
+IModbusClient --> DataCollector : connectionStateChanged\n→ onConnectionChanged
+IModbusClient --> DataCollector : registersRead\n→ onRegistersRead
+IModbusClient --> DataCollector : communicationError\n→ onCommError
+
+DataCollector --> DataCache : value\n→ updateValue
+DataCollector --> AlarmEngine : value\n→ checkValue
+AlarmEngine --> MainViewModel : newAlarm\n→ newAlarm
+DataCollector --> MainViewModel : deviceConnectionChanged / deviceOnlineChanged / statusMessage
+
+DataCache --> MainWindow : devicesChanged\n→ 重建硬件列表
+DataCache --> MainWindow : currentDeviceChanged\n→ 表格标题 + 曲线重建
+DataCache --> MainWindow : valueChanged\n→ CurvePanel::addPoint
 
 @enduml
