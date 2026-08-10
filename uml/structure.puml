@@ -177,6 +177,20 @@ class AlarmEngine {
     end notes
 }
 
+class AppLogger {
+    + {static} install(logDir, minLevel = Info, maxBytes = 1M, maxBackups = 3) : void
+    + {static} setMinLevel(level) / minLevel() : Level
+    + {static} levelForType(qtMsgType) : Level
+    + {static} passes(qtMsgType, minLevel) : bool
+    + {static} backupFileName(base, index) : QString
+    ..
+    notes
+      全局消息处理器 → <exe>/data/app.log（时间戳+级别，QMutex 跨线程互斥）；
+      分级过滤（--log-level 可调）+ 按大小轮转（app.log → .1 → …，丢弃最旧）；
+      纯逻辑静态函数 → test_app_logger 单测
+    end notes
+}
+
 class DataCache {
     - m_devices : QList~DeviceInfo~
     - m_values : QHash~int, QHash~int, double~~
