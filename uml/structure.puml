@@ -261,6 +261,7 @@ class MainWindow {
     - m_deviceTree : QTreeWidget*
     - m_dataTable : QTableView*
     - m_curvePanel : CurvePanel*
+    - m_dashPanel : DashboardPanel*
     - m_alarmTable : QTableWidget*
     - m_statusLabel : QLabel*
     - m_historyPanel : HistoryPanel*
@@ -295,6 +296,38 @@ class CurvePanel {
     ..
     slots
     - onUiTick() : void              ' 50ms 滚动时间窗 + 剔除过期 + 自适应 Y
+}
+
+class GaugeWidget {
+    - m_name / m_unit : QString
+    - m_color : QColor
+    - m_lower / m_upper : double     ' 报警上下限
+    - m_dialMin / m_dialMax : double ' 表盘量程（限值 ±50% 裕量）
+    - m_value : double; m_hasValue : bool
+    ..
+    + setChannel(ch : Channel) : void
+    + setValue(value) : void
+    + {static} computeDialRange(lower, upper, &min, &max) : void
+    + {static} angleFor(value, dialMin, dialMax) : double
+    ..
+    notes
+      QPainter 手绘圆形表盘：彩色限值弧（绿/琥珀/红）+ 刻度 + 指针 + 数字读数；
+      纯几何为静态函数 → test_gauge 单测（无 GUI 依赖）
+    end notes
+}
+
+class DashboardPanel {
+    - m_title : QLabel*
+    - m_grid : QGridLayout*
+    - m_gauges : QHash~int, GaugeWidget*~   ' regAddr → gauge
+    ..
+    + setChannels(channels, deviceName) : void
+    + updateValue(regAddr, value) : void
+    ..
+    notes
+      当前设备各通道的表盘网格（≤4 单行，多则换行）；
+      复用曲线同一套 DataCache 信号通路
+    end notes
 }
 
 class HistoryPanel {
@@ -514,10 +547,12 @@ DataCollector *-- "n" DeviceContext
 
 MainWindow *-- "1" MainViewModel
 MainWindow *-- "1" CurvePanel
+MainWindow *-- "1" DashboardPanel
 MainWindow *-- "1" HistoryPanel
 MainWindow *-- "2" SimulatedModbusServer
 MainWindow *-- "1" SimulatedSerialServer
 
+DashboardPanel *-- "n" GaugeWidget
 HistoryPanel *-- "1" AlarmTableModel
 
 SimulatedModbusServer *-- "1" SimulatedDevice
@@ -545,6 +580,7 @@ HistoryPanel ..> MainViewModel : <<uses>>
 MainWindow ..> MainViewModel : <<uses>>
 MainWindow ..> Channel : <<uses>>
 CurvePanel ..> Channel : <<uses>>
+GaugeWidget ..> Channel : <<uses>>
 HistoryPanel ..> Channel : <<uses>>
 WriteRegisterDialog ..> DeviceInfo : <<uses>>
 
@@ -569,7 +605,7 @@ DataCollector --> MainViewModel : configLoaded
 MainViewModel --> DataCache : drainSamples → updateValue
 DataCache --> MainWindow : devicesChanged → 重建硬件列表 + HistoryPanel::setDevices
 DataCache --> MainWindow : currentDeviceChanged → 表格标题 + 曲线重建
-DataCache --> MainWindow : valueChanged → CurvePanel::addPoint
+DataCache --> MainWindow : valueChanged → CurvePanel::addPoint + DashboardPanel::updateValue
 MainViewModel --> HistoryPanel : historySamplesReady / historyAlarmsReady
 MainViewModel --> MainWindow : writeFinished → 状态栏
 

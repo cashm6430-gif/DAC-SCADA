@@ -48,6 +48,12 @@
   - 遥控写真实结果：`writeSucceeded`/`writeFailed` 信号 → `writeFinished` 仅在实际总线应答后发出（不再"发出即成功"）
   - 自检真实断言：`--selftest` 等按断言结果返回退出码（失败在 CI 以非零暴露，不靠人工读文件）
 
+- [x] **实时仪表盘（圆形表盘）**
+  - `ui/gauge_widget.*`：QPainter 手绘单通道圆形表盘——彩色限值弧（绿=正常 / 琥珀=低于下限 / 红=超上限）、刻度+指针+数字读数，无第三方依赖
+  - `ui/dashboard_panel.*`：当前设备各通道的表盘网格（≤4 通道单行，多则换行）；复用曲线同一套 `DataCache` 数据通路（`valueChanged`/`currentDeviceChanged`/`devicesChanged`）
+  - 表盘量程由通道报警上下限推导（各加 50% 裕量，指针可进入危险区）；无数据时指针居中、读数 `--`
+  - 纯几何抽为静态函数（`computeDialRange`/`angleFor`）→ `test_gauge` 单测（量程裕量、135°..405° 角度映射、越界钳位、退化限值）
+
 ## 验证命令
 - `cmake --preset release && cmake --build build_release --config Release`（/W4 零警告）
 - `ctest --test-dir build_release -C Release`（4 个单元测试，毫秒级）
