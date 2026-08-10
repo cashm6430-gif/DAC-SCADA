@@ -5,6 +5,7 @@ build_release/
 out/
 [Dd]ebug/
 [Rr]elease/
+Testing/
 
 # ── IDE / Editor ─────────────────────────────────
 .vs/

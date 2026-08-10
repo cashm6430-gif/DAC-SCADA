@@ -74,6 +74,7 @@ private:
     QLabel             *m_statusLabel = nullptr;   // 连接状态
     HistoryPanel       *m_historyPanel = nullptr;  // 历史查询面板
     QDockWidget        *m_historyDock  = nullptr;  // 历史查询 dock（菜单可见性切换）
+    QAction            *m_simToggle    = nullptr;  // 模拟器开关 action（菜单/工具栏共享）
 };
 
 #endif // MAINWINDOW_H

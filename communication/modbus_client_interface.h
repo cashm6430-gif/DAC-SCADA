@@ -34,6 +34,11 @@ signals:
     void connectionStateChanged(bool connected);
     void registersRead(const QModbusDataUnit &unit);
     void communicationError(const QString &message);
+    /// A writeSingleRegister() request was acknowledged by the peer (success).
+    void writeSucceeded(int regAddr);
+    /// A writeSingleRegister() request failed (timeout, protocol error, or the
+    /// request could not even be sent). \a error carries the transport detail.
+    void writeFailed(int regAddr, const QString &error);
 };
 
 #endif // MODBUS_CLIENT_INTERFACE_H

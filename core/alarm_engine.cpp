@@ -8,24 +8,39 @@ AlarmEngine::AlarmEngine(QObject *parent)
 void AlarmEngine::checkValue(int deviceIndex, const Channel &ch, double value)
 {
     auto &devStates = m_states[deviceIndex];
-    const auto it = devStates.constFind(ch.regAddr);
-    const Status prev = (it != devStates.constEnd()) ? it.value() : Status::Normal;
+    TrackedState &st = devStates[ch.regAddr];
 
-    Status now;
+    Status candidate;
     if (value > ch.upperLimit) {
-        now = Status::High;
+        candidate = Status::High;
     } else if (value < ch.lowerLimit) {
-        now = Status::Low;
+        candidate = Status::Low;
     } else {
-        now = Status::Normal;
+        candidate = Status::Normal;
     }
 
-    if (now == prev)
+    // Already committed to this state → nothing to do.
+    if (candidate == st.committed) {
+        st.pending = candidate;
+        st.consecutive = 0;
+        return;
+    }
+
+    // A new candidate differs from the committed state. Require it to hold for
+    // kDebounceCount consecutive samples before committing, so a value that
+    // just flicks across the limit doesn't raise then immediately recover.
+    if (candidate != st.pending)
+        st.consecutive = 0;   // direction changed → restart the debounce
+    st.pending = candidate;
+    ++st.consecutive;
+
+    if (st.consecutive < kDebounceCount)
         return;
 
-    devStates[ch.regAddr] = now;
+    st.committed = candidate;
+    st.consecutive = 0;
 
-    switch (now) {
+    switch (candidate) {
     case Status::High:
         raise(deviceIndex,
               QStringLiteral("%1 超上限 (%2 %3)")
@@ -49,10 +64,10 @@ void AlarmEngine::raise(int deviceIndex, const QString &message,
                         AlarmRecord::Severity severity)
 {
     AlarmRecord rec;
-    rec.timestamp  = QDateTime::currentDateTime();
-    rec.deviceAddr = static_cast<qint16>(deviceIndex);
-    rec.message    = message;
-    rec.severity   = severity;
+    rec.timestamp   = QDateTime::currentDateTime();
+    rec.deviceIndex = static_cast<qint16>(deviceIndex);
+    rec.message     = message;
+    rec.severity    = severity;
     rec.acknowledged = false;
 
     emit newAlarm(rec);

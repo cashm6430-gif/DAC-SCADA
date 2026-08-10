@@ -2,7 +2,65 @@
 #include <QTimer>
 #include <QString>
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QDateTime>
+#include <QMessageLogContext>
+#include <cstdlib>
 #include "ui/mainwindow.h"
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// File log handler — with WIN32_EXECUTABLE there is no console, so qInfo/
+// qWarning/qCritical would otherwise be invisible. Everything is appended to
+// <exe>/data/app.log (same directory as the history database), timestamped and
+// serialized across threads (collector runs on a worker thread).
+// ---------------------------------------------------------------------------
+
+QFile g_logFile;
+QMutex g_logMutex;
+
+void messageHandler(QtMsgType type, const QMessageLogContext &ctx,
+                    const QString &msg)
+{
+    Q_UNUSED(ctx)
+    QMutexLocker lock(&g_logMutex);
+
+    if (!g_logFile.isOpen()) {
+        const QString dir =
+            QCoreApplication::applicationDirPath() + QStringLiteral("/data");
+        QDir().mkpath(dir);
+        g_logFile.setFileName(dir + QStringLiteral("/app.log"));
+        g_logFile.open(QIODevice::WriteOnly | QIODevice::Append);
+    }
+
+    if (g_logFile.isOpen()) {
+        QString level;
+        switch (type) {
+        case QtDebugMsg:    level = QStringLiteral("DEBUG"); break;
+        case QtInfoMsg:     level = QStringLiteral("INFO");  break;
+        case QtWarningMsg:  level = QStringLiteral("WARN");  break;
+        case QtCriticalMsg: level = QStringLiteral("CRIT");  break;
+        case QtFatalMsg:    level = QStringLiteral("FATAL"); break;
+        }
+
+        QTextStream ts(&g_logFile);
+        ts << QDateTime::currentDateTime().toString(
+                  QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"))
+           << QLatin1Char(' ') << '[' << level << "] " << msg << '\n';
+        ts.flush();
+    }
+
+    // Preserve Qt's fatal behavior (abort after logging).
+    if (type == QtFatalMsg)
+        std::abort();
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -11,6 +69,8 @@ int main(int argc, char *argv[])
     app.setApplicationName("DAC-SCADA");
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("DAC-SCADA");
+
+    qInstallMessageHandler(messageHandler);
 
     MainWindow window;
 

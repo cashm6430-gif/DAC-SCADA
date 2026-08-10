@@ -4,6 +4,7 @@
 #include "communication/modbus_serial_client.h"
 #include "core/alarm_engine.h"
 #include "core/history_store.h"
+#include "core/backoff.h"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -174,6 +175,21 @@ void DataCollector::connectAll()
                 this, [this, ctx](const QModbusDataUnit &unit) { onRegistersRead(ctx, unit); });
         connect(c, &IModbusClient::communicationError,
                 this, [this, ctx](const QString &msg) { onCommError(ctx, msg); });
+        // Remote-write outcome: relayed to the GUI as writeFinished. The lambda
+        // must not capture `i` by value here (index could shift across reloads
+        // during a deferred flush) — resolve it from the context instead.
+        connect(c, &IModbusClient::writeSucceeded,
+                this, [this, ctx](int regAddr) {
+                    emit writeFinished(m_ctx.indexOf(ctx), true,
+                        tr("已向 %1 写入寄存器 %2 = 成功")
+                            .arg(ctx->info.name).arg(regAddr));
+                });
+        connect(c, &IModbusClient::writeFailed,
+                this, [this, ctx](int regAddr, const QString &err) {
+                    emit writeFinished(m_ctx.indexOf(ctx), false,
+                        tr("写入 %1 寄存器 %2 失败：%3")
+                            .arg(ctx->info.name).arg(regAddr).arg(err));
+                });
         ctx->client = c;
 
         // Reset the reconnect state machine for a fresh connection attempt.
@@ -196,6 +212,11 @@ void DataCollector::connectAll()
             enterReconnect(ctx);
         }
     }
+
+    // Start the poll timer unconditionally: the reconnect state machine runs
+    // inside onPollTick, so it must tick even when every connectTo() failed
+    // synchronously (otherwise a fully-failed connectAll would never retry).
+    startPolling(100);
 }
 
 void DataCollector::disconnectAll()
@@ -243,13 +264,10 @@ void DataCollector::writeRegister(int deviceIndex, int regAddr, quint16 value)
         return;
     }
 
-    // Async hand-off: the transport sends the write on the bus and reports
-    // protocol errors via communicationError; success shows up as the new
-    // register value on the next poll tick.
+    // Async hand-off: the transport sends the write and reports the real
+    // outcome via writeSucceeded/writeFailed (which we relay as writeFinished).
+    // No success is reported here — only a confirmed bus-level reply counts.
     ctx->client->writeSingleRegister(regAddr, value);
-    emit writeFinished(deviceIndex, true,
-        tr("已向 %1 写入寄存器 %2 = %3")
-            .arg(ctx->info.name).arg(regAddr).arg(value));
 }
 
 void DataCollector::stopPolling()
@@ -372,9 +390,10 @@ void DataCollector::onRegistersRead(DeviceContext *ctx,
 
 void DataCollector::onCommError(DeviceContext *ctx, const QString &msg)
 {
-    Q_UNUSED(msg)
     ctx->failCount++;
     emit deviceFailCountChanged(m_ctx.indexOf(ctx), ctx->failCount);
+    qWarning() << "DataCollector: 通信失败" << ctx->info.name
+               << "failCount=" << ctx->failCount << msg;
 
     // After several consecutive failures the device is considered offline.
     // This is how serial (and dead-TCP-peer) links are detected — there is no
@@ -414,9 +433,7 @@ void DataCollector::setDeviceOnline(DeviceContext *ctx, bool online)
 
 qint64 DataCollector::backoffMs(const DeviceContext *ctx) const
 {
-    const int exp = qBound(0, ctx->retryCount, 12);
-    const qint64 ms = static_cast<qint64>(kBackoffBaseMs) << exp;   // base·2^n
-    return qMin(ms, static_cast<qint64>(kBackoffMaxMs));
+    return reconnectBackoffMs(ctx->retryCount, kBackoffBaseMs, kBackoffMaxMs);
 }
 
 void DataCollector::enterReconnect(DeviceContext *ctx)

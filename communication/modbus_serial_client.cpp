@@ -88,7 +88,8 @@ void ModbusSerialClient::sendReadRequest(int startAddr, int count)
 {
     QModbusDataUnit unit(QModbusDataUnit::HoldingRegisters, startAddr, count);
 
-    m_pendingReadRequest = true;
+    m_pendingReadRequest  = true;
+    m_pendingWriteRequest = false;
     m_pendingReply = m_client->sendReadRequest(unit, m_unitId);
     if (!m_pendingReply) {
         emit communicationError(tr("发送 Modbus 请求失败: %1")
@@ -102,7 +103,9 @@ void ModbusSerialClient::sendReadRequest(int startAddr, int count)
 void ModbusSerialClient::writeSingleRegister(int regAddr, quint16 value)
 {
     if (!isConnected()) {
-        emit communicationError(tr("串口未连接: %1").arg(m_portName));
+        const QString err = tr("串口未连接: %1").arg(m_portName);
+        emit writeFailed(regAddr, err);
+        emit communicationError(err);
         return;
     }
     if (m_pendingReply) {
@@ -121,11 +124,15 @@ void ModbusSerialClient::sendWriteRequest(int regAddr, quint16 value)
     QModbusDataUnit unit(QModbusDataUnit::HoldingRegisters, regAddr, 1);
     unit.setValue(0, value);
 
-    m_pendingReadRequest = false;
+    m_pendingReadRequest  = false;
+    m_pendingWriteRequest = true;
+    m_pendingWriteAddr    = regAddr;
     m_pendingReply = m_client->sendWriteRequest(unit, m_unitId);
     if (!m_pendingReply) {
-        emit communicationError(tr("发送 Modbus 写入失败: %1")
-                                    .arg(m_client->errorString()));
+        const QString err = tr("发送 Modbus 写入失败: %1")
+                                .arg(m_client->errorString());
+        emit writeFailed(regAddr, err);
+        emit communicationError(err);
         return;
     }
     connect(m_pendingReply, &QModbusReply::finished,
@@ -147,12 +154,23 @@ void ModbusSerialClient::onStateChanged(QModbusDevice::State state)
 void ModbusSerialClient::onReplyFinished()
 {
     auto *reply = m_pendingReply;
+    const bool wasWrite  = m_pendingWriteRequest;
+    const int  writeAddr = m_pendingWriteAddr;
     m_pendingReply = nullptr;
 
     if (reply) {
         if (reply->error() != QModbusDevice::NoError) {
-            emit communicationError(tr("Modbus 响应错误: %1")
-                                        .arg(reply->errorString()));
+            // Reply-level failures (timeout / protocol error) are reported here
+            // so the collector's failCount / offline detection works — Qt only
+            // emits errorOccurred for connection-level errors, NOT request
+            // timeouts, so there is no double counting to dedupe.
+            const QString err = tr("Modbus 响应错误: %1")
+                                    .arg(reply->errorString());
+            emit communicationError(err);
+            if (wasWrite)
+                emit writeFailed(writeAddr, err);
+        } else if (wasWrite) {
+            emit writeSucceeded(writeAddr);
         } else {
             const auto result = reply->result();
             if (result.isValid() && m_pendingReadRequest

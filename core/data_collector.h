@@ -42,9 +42,9 @@ public:
     Q_INVOKABLE void connectAll();
     Q_INVOKABLE void disconnectAll();
     /// Remote control: write one holding register on a device (遥控/参数下发).
-    /// The write is async; "ok" here means the request was handed to the
-    /// transport, not that the peer confirmed it (results arrive via
-    /// communicationError on failure, and via the next poll on success).
+    /// The write is async; the outcome is reported on writeFinished only after
+    /// the transport gets a real reply (success or failure) from the peer —
+    /// never merely on request acceptance.
     Q_INVOKABLE void writeRegister(int deviceIndex, int regAddr, quint16 value);
     void startPolling(int intervalMs = 100);
     void stopPolling();
@@ -126,7 +126,8 @@ signals:
     void statusMessage(const QString &message);
     /// loadConfig() finished and m_devices is ready (GUI updates the cache).
     void configLoaded();
-    /// A writeRegister() request was accepted (or rejected) by the transport.
+    /// A writeRegister() completed (or failed) on the bus — emitted from the
+    /// worker thread after the transport's writeSucceeded/writeFailed.
     void writeFinished(int deviceIndex, bool ok, const QString &message);
 };
 

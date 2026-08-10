@@ -49,6 +49,9 @@ private:
     /// register data (it would feed the cache/alarm engine with the written
     /// value as if it were a fresh reading).
     bool m_pendingReadRequest = false;
+    /// In-flight request is a writeSingleRegister() (mutually exclusive with
+    /// m_pendingReadRequest) — drives writeSucceeded/writeFailed on completion.
+    bool m_pendingWriteRequest = false;
     /// A control write that arrived while another request was in flight is
     /// stashed here and flushed by onReplyFinished, so the 10 Hz polling read
     /// stream never silently drops a user's remote-write command.

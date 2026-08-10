@@ -4,6 +4,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QStringList>
@@ -76,7 +77,7 @@ void HistoryStore::addAlarm(const AlarmRecord &rec)
 
     m_alarmTs.append(rec.timestamp.toMSecsSinceEpoch());
     m_alarmSev.append(static_cast<int>(rec.severity));
-    m_alarmDev.append(static_cast<int>(rec.deviceAddr));
+    m_alarmDev.append(static_cast<int>(rec.deviceIndex));
     m_alarmMsg.append(rec.message);
 
     if (m_alarmTs.size() >= kFlushThreshold)
@@ -182,7 +183,7 @@ void HistoryStore::queryAlarms(int requestId, int deviceIndex,
         AlarmRecord a;
         a.timestamp  = QDateTime::fromMSecsSinceEpoch(query.value(0).toLongLong());
         a.severity   = static_cast<AlarmRecord::Severity>(query.value(1).toInt());
-        a.deviceAddr = static_cast<qint16>(query.value(2).toInt());
+        a.deviceIndex = static_cast<qint16>(query.value(2).toInt());
         a.message    = query.value(3).toString();
         a.acknowledged = false;
         alarms.append(a);
@@ -258,6 +259,26 @@ bool HistoryStore::openDatabase()
                    << q.lastError().text();
         db.close();
         return false;
+    }
+
+    // ---- tuning + retention ----
+    // WAL smooths the batched inserts; auto_vacuum keeps the file from
+    // growing forever. VACUUM only runs once (when the DB was created without
+    // auto_vacuum) to migrate it — it is deliberately not run every startup.
+    q.exec(QStringLiteral("PRAGMA journal_mode=WAL"));
+    QSqlQuery pragma(db);
+    if (pragma.exec(QStringLiteral("PRAGMA auto_vacuum")) && pragma.next()
+        && pragma.value(0).toInt() == 0) {
+        q.exec(QStringLiteral("PRAGMA auto_vacuum=INCREMENTAL"));
+        q.exec(QStringLiteral("VACUUM"));
+    }
+
+    // Purge rows older than the retention window, then reclaim the freed pages.
+    const qint64 cutoffMs = QDateTime::currentMSecsSinceEpoch()
+        - static_cast<qint64>(kRetentionDays) * 24 * 3600 * 1000LL;
+    if (q.exec(QStringLiteral("DELETE FROM samples WHERE ts < %1").arg(cutoffMs))
+        && q.exec(QStringLiteral("DELETE FROM alarms WHERE ts < %1").arg(cutoffMs))) {
+        q.exec(QStringLiteral("PRAGMA incremental_vacuum"));
     }
 
     m_dbOpen = true;

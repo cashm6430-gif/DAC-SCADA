@@ -48,6 +48,9 @@ private:
     /// register data (it would feed the cache/alarm engine with the written
     /// value as if it were a fresh reading).
     bool m_pendingReadRequest = false;
+    /// In-flight request is a writeSingleRegister() (mutually exclusive with
+    /// m_pendingReadRequest) — drives writeSucceeded/writeFailed on completion.
+    bool m_pendingWriteRequest = false;
     /// Deferred control write (see ModbusTcpClient for details).
     bool     m_pendingWrite = false;
     int      m_pendingWriteAddr = 0;

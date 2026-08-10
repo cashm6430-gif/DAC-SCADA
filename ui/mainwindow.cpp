@@ -81,9 +81,8 @@ void MainWindow::setupUi()
     fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
 
     QMenu *simMenu = menuBar()->addMenu(tr("&Simulator"));
-    QAction *simToggle = simMenu->addAction(tr("&Start Simulated PLC"),
-                                            this, &MainWindow::toggleSimulator);
-    simToggle->setObjectName("simulatorToggle");
+    m_simToggle = simMenu->addAction(tr("&Start Simulated PLC"),
+                                     this, &MainWindow::toggleSimulator);
 
     QMenu *ctrlMenu = menuBar()->addMenu(tr("&控制"));
     ctrlMenu->addAction(tr("写寄存器…"),
@@ -223,7 +222,6 @@ bool MainWindow::startSimulatorAutomatically()
 
 void MainWindow::toggleSimulator()
 {
-    auto *action = findChild<QAction *>("simulatorToggle");
     const bool wasRunning = m_simulator->isListening()
         || m_simulator2->isListening() || m_serialSim->isListening();
 
@@ -232,8 +230,8 @@ void MainWindow::toggleSimulator()
         m_simulator2->stop();
         m_serialSim->stop();
         statusBar()->showMessage(tr("模拟下位机已停止"), 3000);
-        if (action)
-            action->setText(tr("&Start Simulated PLC"));
+        if (m_simToggle)
+            m_simToggle->setText(tr("&Start Simulated PLC"));
     } else {
         const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
         const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
@@ -241,8 +239,8 @@ void MainWindow::toggleSimulator()
         if (ok1 || ok2 || ok3) {
             statusBar()->showMessage(
                 tr("模拟下位机运行中: TCP 1502/1503 + 串口 COM6"), 5000);
-            if (action)
-                action->setText(tr("&Stop Simulated PLC"));
+            if (m_simToggle)
+                m_simToggle->setText(tr("&Stop Simulated PLC"));
             if (!ok3)
                 QMessageBox::warning(this, tr("Simulator"),
                     tr("串口模拟器未启动（COM6 可能不存在）。\n"
@@ -353,11 +351,11 @@ void MainWindow::bindToViewModel()
         default:
             level = tr("信息"); color = Qt::darkGreen; break;
         }
-        // 报警来源设备名（AlarmRecord::deviceAddr 记录的是设备索引）
+        // 报警来源设备名（AlarmRecord::deviceIndex 记录的是设备索引）
         const auto &devices = m_viewModel->cache()->devices();
         QString device = tr("—");
-        if (rec.deviceAddr >= 0 && rec.deviceAddr < devices.size())
-            device = devices.at(rec.deviceAddr).name;
+        if (rec.deviceIndex >= 0 && rec.deviceIndex < devices.size())
+            device = devices.at(rec.deviceIndex).name;
 
         appendAlarmRow(rec.timestamp.toString(QStringLiteral("hh:mm:ss")),
                        level, device, rec.message);
@@ -453,6 +451,19 @@ void MainWindow::runSelfTest(const QString &outPath)
     });
 
     QTimer::singleShot(8000, this, [this, outPath, ok1, ok2, ok3]() {
+        auto *cache = m_viewModel->cache();
+        const auto &devices = cache->devices();
+
+        // 真实断言：只有数据达到预期才算 PASS，并据其结果决定退出码，
+        // 这样 --selftest 在 CI 里失败时能以非零退出码暴露（不依赖人工读文件）。
+        const bool pass = ok1 && ok2
+                       && m_viewModel->pollingActive()
+                       && devices.size() >= 3
+                       && !m_viewModel->deviceOnline(0)   // 串口泵站：t=2s 停 COM6 后应离线
+                       && m_viewModel->deviceOnline(1)    // 温控PLC-1：应在线
+                       && m_viewModel->deviceOnline(2)    // 电机PLC-2：应在线
+                       && m_viewModel->historySamples() > 0;
+
         QFile file(outPath);
         if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             QTextStream ts(&file);
@@ -466,8 +477,6 @@ void MainWindow::runSelfTest(const QString &outPath)
             ts << "NOTE: serial COM6 stopped at t=2s; pump should be OFFLINE\n";
             ts << "serialSim listening: "
                << (m_serialSim->isListening() ? "yes" : "no") << "\n";
-            auto *cache = m_viewModel->cache();
-            const auto &devices = cache->devices();
             for (int d = 0; d < devices.size(); ++d) {
                 ts << "[" << devices.at(d).name << "]\n"
                    << "  connected: "
@@ -493,9 +502,10 @@ void MainWindow::runSelfTest(const QString &outPath)
                    << "] " << alarms.at(i).message << "\n";
             }
             ts << "historySamples: " << m_viewModel->historySamples() << "\n";
+            ts << "result: " << (pass ? "PASS" : "FAIL") << "\n";
             file.close();
         }
-        QApplication::exit(0);
+        QApplication::exit(pass ? 0 : 1);
         });
     });
 }

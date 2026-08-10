@@ -29,7 +29,6 @@ enum class ConnType {
 struct DeviceInfo {
     qint16  address = 1;    // Modbus unit address (both TCP & serial)
     QString name;
-    QString type;       // e.g. "temperature_sensor", "pump_controller"
 
     ConnType connType = ConnType::Tcp;
 
@@ -47,7 +46,7 @@ struct DeviceInfo {
 };
 
 struct AlarmRecord {
-    qint16    deviceAddr = 0;
+    qint16    deviceIndex = 0;   // 设备在配置中的索引（非 Modbus 单元地址）
     QDateTime timestamp;
     QString   message;
     enum Severity { Info, Warning, Critical } severity = Info;

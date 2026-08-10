@@ -39,6 +39,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     SerialPort
     SerialBus
     PrintSupport
+    Test
 )
 
 # ── QCustomPlot (vendored single-file charting library) ─────────────
@@ -153,3 +154,35 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMENT "Copying config/ to executable directory..."
     VERBATIM
 )
+
+# ── Unit tests (QTest) ─────────────────────────────
+# Fast, deterministic, headless — no simulators or 8 s event-loop integration
+# tests. One executable per test group (each QTEST_*_MAIN defines its own
+# main). Run with: ctest --test-dir build_release  (or build_debug)
+enable_testing()
+
+function(add_dac_test target_name)
+    add_executable(${target_name} ${ARGN})
+    target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(${target_name} PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test Qt6::Sql)
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE /W4 /utf-8)
+    endif()
+    # The app is deployed by windeployqt, which does not know about Qt6Test
+    # (the GUI executable does not link it) — copy the test DLL next to the
+    # test executable so it can actually start.
+    add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt6::Test>" "$<TARGET_FILE_DIR:${target_name}>"
+        COMMENT "Copying Qt6Test DLL next to ${target_name}..."
+        VERBATIM)
+    add_test(NAME ${target_name} COMMAND ${target_name})
+    set_tests_properties(${target_name} PROPERTIES TIMEOUT 120)
+endfunction()
+
+add_dac_test(test_backoff tests/test_backoff.cpp)
+add_dac_test(test_sample_queue tests/test_sample_queue.cpp)
+add_dac_test(test_alarm_engine tests/test_alarm_engine.cpp core/alarm_engine.cpp)
+add_dac_test(test_history_store tests/test_history_store.cpp core/history_store.cpp)
+

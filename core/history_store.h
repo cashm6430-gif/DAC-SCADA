@@ -94,6 +94,9 @@ private:
     static constexpr int kFlushIntervalMs = 1000;
     /// Hard cap on rows returned by a single history query (bounded memory).
     static constexpr int kMaxQueryRows = 200000;
+    /// Retention window: rows older than this are purged on database open, so a
+    /// long-running SCADA deployment cannot grow history.db without bound.
+    static constexpr int kRetentionDays = 30;
 };
 
 #endif // HISTORY_STORE_H
