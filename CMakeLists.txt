@@ -58,6 +58,52 @@ if(MSVC)
     target_compile_options(qcustomplot PRIVATE /W0)
 endif()
 
+# ── QXlsx (vendored xlsx writer, MIT) ──────────────────────────
+# Third-party — /W0 keeps the first-party /W4 zero-warning policy. QXlsx's
+# internal zip uses Qt's private QZipWriter/QZipReader (exported from Qt6Core);
+# Qt 6.8 < 6.10 needs no GuiPrivate, only the QtCore private header path.
+file(GLOB QXLSX_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qxlsx/source/*.cpp
+)
+file(GLOB QXLSX_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qxlsx/header/*.h
+)
+# QXlsx's zip reader/writer include <private/qzip*.h> — locate the QtCore
+# private header directory from Qt6::Core's include dirs (e.g. .../QtCore/6.8.4/QtCore).
+get_target_property(_qtcore_incs Qt6::Core INTERFACE_INCLUDE_DIRECTORIES)
+foreach(_inc IN LISTS _qtcore_incs)
+    file(GLOB _priv_hdr "${_inc}/*/QtCore/private/qzipwriter_p.h")
+    if(_priv_hdr)
+        get_filename_component(_qtcore_private_inc "${_priv_hdr}" DIRECTORY)
+        get_filename_component(_qtcore_private_inc "${_qtcore_private_inc}" DIRECTORY)
+        break()
+    endif()
+endforeach()
+if(NOT _qtcore_private_inc)
+    message(FATAL_ERROR "QtCore private headers (qzipwriter_p.h) not found — QXlsx cannot build.")
+endif()
+add_library(qxlsx STATIC ${QXLSX_SOURCES} ${QXLSX_HEADERS})
+target_include_directories(qxlsx PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qxlsx/header
+)
+target_include_directories(qxlsx PRIVATE "${_qtcore_private_inc}")
+# Also add its parent so `<QtCore/private/qglobal_p.h>`-style includes resolve.
+get_filename_component(_qtcore_private_parent "${_qtcore_private_inc}" DIRECTORY)
+target_include_directories(qxlsx PRIVATE "${_qtcore_private_parent}")
+target_compile_definitions(qxlsx PRIVATE
+    QT_NO_KEYWORDS
+    QT_NO_CAST_TO_ASCII
+    QT_NO_CAST_FROM_ASCII
+    QT_NO_URL_CAST_FROM_STRING
+    QT_NO_CAST_FROM_BYTEARRAY
+    QT_USE_QSTRINGBUILDER
+    QT_DISABLE_DEPRECATED_BEFORE=0x060600
+)
+target_link_libraries(qxlsx PUBLIC Qt6::Core Qt6::Gui)
+if(MSVC)
+    target_compile_options(qxlsx PRIVATE /W0 "SHELL:/permissive")
+endif()
+
 # ── Source files ──────────────────────────────────
 set(SOURCES
     main.cpp
@@ -115,6 +161,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::SerialPort
     Qt6::SerialBus
     qcustomplot
+    qxlsx
 )
 
 # ── Compiler warnings (MSVC) ──────────────────────

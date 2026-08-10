@@ -74,6 +74,9 @@ private:
     void exportCsv();
     void exportSamplesCsv(const QString &path);
     void exportAlarmsCsv(const QString &path);
+    void exportXlsx();
+    void exportSamplesXlsx(const QString &path);
+    void exportAlarmsXlsx(const QString &path);
     QString deviceName(int deviceIndex) const;
 
     MainViewModel     *m_vm = nullptr;
@@ -86,6 +89,7 @@ private:
     QDateTimeEdit *m_endEdit     = nullptr;
     QPushButton   *m_queryBtn    = nullptr;
     QPushButton   *m_exportBtn   = nullptr;
+    QPushButton   *m_xlsxBtn     = nullptr;
     QTabWidget    *m_tabs        = nullptr;
     QCustomPlot   *m_plot        = nullptr;
     QCPAxis       *m_axisX       = nullptr;

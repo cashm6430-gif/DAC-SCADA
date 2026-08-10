@@ -1,6 +1,7 @@
 #include "history_panel.h"
 #include "main_viewmodel.h"
 
+#include <xlsxdocument.h>
 #include <qcustomplot.h>
 #include <QComboBox>
 #include <QListWidget>
@@ -131,6 +132,7 @@ HistoryPanel::HistoryPanel(MainViewModel *vm, QWidget *parent)
 
     m_queryBtn  = new QPushButton(tr("查询"), this);
     m_exportBtn = new QPushButton(tr("导出CSV"), this);
+    m_xlsxBtn   = new QPushButton(tr("导出XLSX"), this);
 
     auto *selRow = new QHBoxLayout;
     selRow->addWidget(new QLabel(tr("设备"), this));
@@ -147,6 +149,7 @@ HistoryPanel::HistoryPanel(MainViewModel *vm, QWidget *parent)
     selRow->addStretch();
     selRow->addWidget(m_queryBtn);
     selRow->addWidget(m_exportBtn);
+    selRow->addWidget(m_xlsxBtn);
     root->addLayout(selRow);
 
     // ---- channel selection ----
@@ -197,6 +200,7 @@ HistoryPanel::HistoryPanel(MainViewModel *vm, QWidget *parent)
             this, &HistoryPanel::onDeviceChanged);
     connect(m_queryBtn, &QPushButton::clicked, this, &HistoryPanel::applyQuery);
     connect(m_exportBtn, &QPushButton::clicked, this, &HistoryPanel::exportCsv);
+    connect(m_xlsxBtn, &QPushButton::clicked, this, &HistoryPanel::exportXlsx);
 
     auto makeQuick = [this](QPushButton *btn, int minutes) {
         connect(btn, &QPushButton::clicked, this, [this, minutes]() {
@@ -472,6 +476,118 @@ void HistoryPanel::exportAlarmsCsv(const QString &path)
            << ',' << level << ',' << a.message << '\n';
     }
     file.close();
+    m_statusLabel->setText(tr("已导出 %1 条报警到 %2")
+                               .arg(m_lastAlarms.size()).arg(path));
+}
+
+void HistoryPanel::exportXlsx()
+{
+    if (m_tabs->currentIndex() == 1 && !m_lastAlarms.isEmpty()) {
+        const QString path = QFileDialog::getSaveFileName(
+            this, tr("导出报警历史 XLSX"),
+            QStringLiteral("alarms_%1_%2.xlsx")
+                .arg(deviceName(m_lastAlarmDevice))
+                .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")),
+            tr("Excel 文件 (*.xlsx)"));
+        if (!path.isEmpty())
+            exportAlarmsXlsx(path);
+        return;
+    }
+
+    if (m_lastSamples.rows.isEmpty()) {
+        m_statusLabel->setText(tr("无采样数据可导出"));
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("导出采样历史 XLSX"),
+        QStringLiteral("history_%1_%2.xlsx")
+            .arg(deviceName(m_lastSamples.deviceIndex))
+            .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")),
+        tr("Excel 文件 (*.xlsx)"));
+    if (!path.isEmpty())
+        exportSamplesXlsx(path);
+}
+
+void HistoryPanel::exportSamplesXlsx(const QString &path)
+{
+    const int devIdx = m_lastSamples.deviceIndex;
+    const QList<Channel> &channels = (devIdx >= 0 && devIdx < m_devices.size())
+        ? m_devices.at(devIdx).channels : QList<Channel>();
+
+    auto channelOf = [&channels](int regAddr) -> const Channel * {
+        for (const Channel &c : channels)
+            if (c.regAddr == regAddr)
+                return &c;
+        return nullptr;
+    };
+
+    QXlsx::Document xlsx;
+    int row = 1;
+    xlsx.write(row, 1, tr("# 设备"));
+    xlsx.write(row, 2, deviceName(devIdx));
+    ++row;
+    xlsx.write(row, 1, tr("# 范围"));
+    xlsx.write(row, 2,
+               QStringLiteral("%1 - %2")
+                   .arg(QDateTime::fromMSecsSinceEpoch(m_queryStartMs)
+                            .toString("yyyy-MM-dd HH:mm:ss"))
+                   .arg(QDateTime::fromMSecsSinceEpoch(m_queryEndMs)
+                            .toString("yyyy-MM-dd HH:mm:ss")));
+    ++row;
+    xlsx.write(row, 1, tr("时间"));
+    xlsx.write(row, 2, tr("通道"));
+    xlsx.write(row, 3, tr("单位"));
+    xlsx.write(row, 4, tr("值"));
+    ++row;
+
+    for (const HistoryRow &r : m_lastSamples.rows) {
+        const Channel *ch = channelOf(r.regAddr);
+        xlsx.write(row, 1,
+                   QDateTime::fromMSecsSinceEpoch(r.tsMs)
+                       .toString("yyyy-MM-dd HH:mm:ss.zzz"));
+        xlsx.write(row, 2, ch ? ch->name : QString::number(r.regAddr));
+        xlsx.write(row, 3, ch ? ch->unit : QStringLiteral("-"));
+        xlsx.write(row, 4, r.value);   // numeric cell
+        ++row;
+    }
+
+    if (!xlsx.saveAs(path)) {
+        m_statusLabel->setText(tr("无法写入 %1").arg(path));
+        return;
+    }
+    m_statusLabel->setText(tr("已导出 %1 行到 %2")
+                               .arg(m_lastSamples.rows.size()).arg(path));
+}
+
+void HistoryPanel::exportAlarmsXlsx(const QString &path)
+{
+    QXlsx::Document xlsx;
+    int row = 1;
+    xlsx.write(row, 1, tr("# 设备"));
+    xlsx.write(row, 2, deviceName(m_lastAlarmDevice));
+    ++row;
+    xlsx.write(row, 1, tr("时间"));
+    xlsx.write(row, 2, tr("级别"));
+    xlsx.write(row, 3, tr("信息"));
+    ++row;
+
+    for (const AlarmRecord &a : m_lastAlarms) {
+        QString level;
+        switch (a.severity) {
+        case AlarmRecord::Critical: level = tr("严重"); break;
+        case AlarmRecord::Warning:  level = tr("警告"); break;
+        default:                    level = tr("信息"); break;
+        }
+        xlsx.write(row, 1, a.timestamp.toString("yyyy-MM-dd HH:mm:ss"));
+        xlsx.write(row, 2, level);
+        xlsx.write(row, 3, a.message);
+        ++row;
+    }
+
+    if (!xlsx.saveAs(path)) {
+        m_statusLabel->setText(tr("无法写入 %1").arg(path));
+        return;
+    }
     m_statusLabel->setText(tr("已导出 %1 条报警到 %2")
                                .arg(m_lastAlarms.size()).arg(path));
 }
