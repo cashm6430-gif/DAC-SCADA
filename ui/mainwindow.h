@@ -7,6 +7,7 @@ class MainViewModel;
 class SimulatedModbusServer;
 class SimulatedSerialServer;
 class CurvePanel;
+class DashboardPanel;
 class HistoryPanel;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -70,6 +71,7 @@ private:
     QTableView         *m_dataTable   = nullptr;   // 通道数据
     QLabel             *m_tableTitle  = nullptr;   // 表格标题（含当前设备名）
     CurvePanel         *m_curvePanel  = nullptr;   // 实时曲线
+    DashboardPanel     *m_dashPanel   = nullptr;   // 仪表盘（当前设备各通道表盘）
     QTableWidget       *m_alarmTable  = nullptr;   // 报警列表
     QLabel             *m_statusLabel = nullptr;   // 连接状态
     HistoryPanel       *m_historyPanel = nullptr;  // 历史查询面板

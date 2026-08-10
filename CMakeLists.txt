@@ -72,6 +72,10 @@ set(SOURCES
     ui/main_viewmodel.cpp
     ui/curve_panel.h
     ui/curve_panel.cpp
+    ui/gauge_widget.h
+    ui/gauge_widget.cpp
+    ui/dashboard_panel.h
+    ui/dashboard_panel.cpp
     ui/history_panel.h
     ui/history_panel.cpp
     ui/write_register_dialog.h
@@ -185,4 +189,7 @@ add_dac_test(test_backoff tests/test_backoff.cpp)
 add_dac_test(test_sample_queue tests/test_sample_queue.cpp)
 add_dac_test(test_alarm_engine tests/test_alarm_engine.cpp core/alarm_engine.cpp)
 add_dac_test(test_history_store tests/test_history_store.cpp core/history_store.cpp)
+add_dac_test(test_gauge tests/test_gauge.cpp ui/gauge_widget.cpp)
+# test_gauge compiles gauge_widget.cpp (a QWidget subclass) → needs Widgets.
+target_link_libraries(test_gauge PRIVATE Qt6::Widgets)
 

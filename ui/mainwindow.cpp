@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "main_viewmodel.h"
 #include "curve_panel.h"
+#include "dashboard_panel.h"
 #include "history_panel.h"
 #include "write_register_dialog.h"
 #include "simulator/simulated_modbus_server.h"
@@ -137,6 +138,9 @@ void MainWindow::setupUi()
                 menu.exec(m_dataTable->viewport()->mapToGlobal(pos));
             });
 
+    // --- 中间：仪表盘（当前设备各通道的圆形表盘） ---
+    m_dashPanel = new DashboardPanel(splitter);
+
     // --- 下方：实时曲线 ---
     auto *curveContainer = new QWidget(splitter);
     auto *curveLayout = new QVBoxLayout(curveContainer);
@@ -150,9 +154,11 @@ void MainWindow::setupUi()
     curveLayout->addWidget(m_curvePanel);
 
     splitter->addWidget(tableContainer);
+    splitter->addWidget(m_dashPanel);
     splitter->addWidget(curveContainer);
     splitter->setStretchFactor(0, 1);
-    splitter->setStretchFactor(1, 2);
+    splitter->setStretchFactor(1, 1);
+    splitter->setStretchFactor(2, 2);
 
     vbox->addWidget(splitter);
     setCentralWidget(central);
@@ -290,6 +296,9 @@ void MainWindow::bindToViewModel()
             }
             if (m_curvePanel)
                 m_curvePanel->setChannels(m_viewModel->cache()->currentChannels());
+            if (m_dashPanel)
+                m_dashPanel->setChannels(m_viewModel->cache()->currentChannels(),
+                                         devices.at(idx).name);
         }
     });
 
@@ -309,6 +318,9 @@ void MainWindow::bindToViewModel()
         }
         if (m_curvePanel)
             m_curvePanel->setChannels(m_viewModel->cache()->currentChannels());
+        if (m_dashPanel)
+            m_dashPanel->setChannels(m_viewModel->cache()->currentChannels(),
+                                     devices.at(idx).name);
     });
 
     // ---- 连接状态 → 状态栏（任一链路已建立即显示"已连接"） ----
@@ -372,6 +384,10 @@ void MainWindow::bindToViewModel()
                 if (m_curvePanel
                     && deviceIndex == m_viewModel->cache()->currentDevice()) {
                     m_curvePanel->addPoint(regAddr, value, tsMs);
+                }
+                if (m_dashPanel
+                    && deviceIndex == m_viewModel->cache()->currentDevice()) {
+                    m_dashPanel->updateValue(regAddr, value);
                 }
             });
 }
