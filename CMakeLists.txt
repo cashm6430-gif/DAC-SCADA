@@ -88,6 +88,8 @@ set(SOURCES
     core/data_collector.cpp
     core/history_store.h
     core/history_store.cpp
+    core/app_logger.h
+    core/app_logger.cpp
     core/sample_queue.h
     core/types.h
     simulator/simulated_device.h
@@ -192,4 +194,5 @@ add_dac_test(test_history_store tests/test_history_store.cpp core/history_store.
 add_dac_test(test_gauge tests/test_gauge.cpp ui/gauge_widget.cpp)
 # test_gauge compiles gauge_widget.cpp (a QWidget subclass) → needs Widgets.
 target_link_libraries(test_gauge PRIVATE Qt6::Widgets)
+add_dac_test(test_app_logger tests/test_app_logger.cpp core/app_logger.cpp)
 

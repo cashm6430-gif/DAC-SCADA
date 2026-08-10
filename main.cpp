@@ -1,66 +1,10 @@
 #include <QApplication>
 #include <QTimer>
 #include <QString>
+#include <QStringList>
 #include <QCoreApplication>
-#include <QDir>
-#include <QFile>
-#include <QTextStream>
-#include <QMutex>
-#include <QMutexLocker>
-#include <QDateTime>
-#include <QMessageLogContext>
-#include <cstdlib>
+#include "core/app_logger.h"
 #include "ui/mainwindow.h"
-
-namespace {
-
-// ---------------------------------------------------------------------------
-// File log handler — with WIN32_EXECUTABLE there is no console, so qInfo/
-// qWarning/qCritical would otherwise be invisible. Everything is appended to
-// <exe>/data/app.log (same directory as the history database), timestamped and
-// serialized across threads (collector runs on a worker thread).
-// ---------------------------------------------------------------------------
-
-QFile g_logFile;
-QMutex g_logMutex;
-
-void messageHandler(QtMsgType type, const QMessageLogContext &ctx,
-                    const QString &msg)
-{
-    Q_UNUSED(ctx)
-    QMutexLocker lock(&g_logMutex);
-
-    if (!g_logFile.isOpen()) {
-        const QString dir =
-            QCoreApplication::applicationDirPath() + QStringLiteral("/data");
-        QDir().mkpath(dir);
-        g_logFile.setFileName(dir + QStringLiteral("/app.log"));
-        g_logFile.open(QIODevice::WriteOnly | QIODevice::Append);
-    }
-
-    if (g_logFile.isOpen()) {
-        QString level;
-        switch (type) {
-        case QtDebugMsg:    level = QStringLiteral("DEBUG"); break;
-        case QtInfoMsg:     level = QStringLiteral("INFO");  break;
-        case QtWarningMsg:  level = QStringLiteral("WARN");  break;
-        case QtCriticalMsg: level = QStringLiteral("CRIT");  break;
-        case QtFatalMsg:    level = QStringLiteral("FATAL"); break;
-        }
-
-        QTextStream ts(&g_logFile);
-        ts << QDateTime::currentDateTime().toString(
-                  QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"))
-           << QLatin1Char(' ') << '[' << level << "] " << msg << '\n';
-        ts.flush();
-    }
-
-    // Preserve Qt's fatal behavior (abort after logging).
-    if (type == QtFatalMsg)
-        std::abort();
-}
-
-} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -70,7 +14,27 @@ int main(int argc, char *argv[])
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("DAC-SCADA");
 
-    qInstallMessageHandler(messageHandler);
+    // 文件日志：分级过滤 + 按大小轮转（默认 INFO，1 MB × 3 份归档）。
+    AppLogger::install(QCoreApplication::applicationDirPath()
+                       + QStringLiteral("/data"));
+
+    // 命令行 --log-level=debug|info|warning|critical：覆盖日志过滤级别。
+    for (const QString &arg : app.arguments()) {
+        if (arg.startsWith(QLatin1String("--log-level="))) {
+            const QString level = arg.mid(12).toLower();
+            if (level == QLatin1String("debug"))
+                AppLogger::setMinLevel(AppLogger::Level::Debug);
+            else if (level == QLatin1String("info"))
+                AppLogger::setMinLevel(AppLogger::Level::Info);
+            else if (level == QLatin1String("warning"))
+                AppLogger::setMinLevel(AppLogger::Level::Warning);
+            else if (level == QLatin1String("critical"))
+                AppLogger::setMinLevel(AppLogger::Level::Critical);
+            else
+                qWarning() << "未知 --log-level:" << arg;
+            break;
+        }
+    }
 
     MainWindow window;
 
