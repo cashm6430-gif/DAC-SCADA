@@ -35,8 +35,22 @@
   - 模拟器记录 `QModbusServer::dataWritten` → 被写寄存器保持写入值（波形不再覆盖，曲线可见稳定），直到模拟器重启
   - 验证：`--selftest-write` 写入电机 reg0=30000 → 两时刻读回均≈300 PASS
 
+- [x] **单元测试（QTest，快速确定性）**
+  - 新增 `tests/` 四个无头可执行：`test_backoff` / `test_sample_queue` / `test_alarm_engine` / `test_history_store`
+  - 覆盖纯逻辑：指数退避数学、有界 FIFO 丢最旧、报警防抖（3 连续采样）、HistoryStore 写→flush→查询回环（临时 SQLite）
+  - 无模拟器/串口依赖，毫秒级跑完；`ctest` 集成，失败即非零退出码
+  - 验证：`ctest --test-dir build_release -C Release` → 4/4 PASS
+
+- [x] **工程加固（可观测性与健壮性）**
+  - 文件日志：`qInstallMessageHandler` 落盘 `<exe>/data/app.log`（时间戳/级别/跨线程互斥），无控制台也能看 qInfo/qWarning
+  - 报警防抖：`AlarmEngine` 阈值穿越需连续 `kDebounceCount=3` 个采样才提交（~300ms），信号在限值附近抖动不再刷 High→Normal→High
+  - 历史库调优：WAL + auto_vacuum INCREMENTAL + 打开时清理 30 天前旧行（长期部署不无限膨胀）
+  - 遥控写真实结果：`writeSucceeded`/`writeFailed` 信号 → `writeFinished` 仅在实际总线应答后发出（不再"发出即成功"）
+  - 自检真实断言：`--selftest` 等按断言结果返回退出码（失败在 CI 以非零暴露，不靠人工读文件）
+
 ## 验证命令
 - `cmake --preset release && cmake --build build_release --config Release`（/W4 零警告）
+- `ctest --test-dir build_release -C Release`（4 个单元测试，毫秒级）
 - `build_release/Release/DAC-SCADA.exe --selftest` → `selftest_result.txt`
 - `build_release/Release/DAC-SCADA.exe --selftest-reconnect` → `reconnect_result.txt`
 - `build_release/Release/DAC-SCADA.exe --selftest-history` → `history_result.txt`

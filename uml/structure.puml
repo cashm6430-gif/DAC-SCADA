@@ -18,6 +18,8 @@ abstract class IModbusClient {
     __connectionStateChanged__(connected : bool)
     __registersRead__(unit : QModbusDataUnit)
     __communicationError__(msg : QString)
+    __writeSucceeded__(regAddr : int)            ' 写应答已确认
+    __writeFailed__(regAddr : int, error : QString)
 }
 
 ' ============================================================
@@ -31,6 +33,7 @@ class ModbusTcpClient {
     - m_unitId : int = 1
     - m_pendingReply : QModbusReply*
     - m_pendingReadRequest : bool
+    - m_pendingWriteRequest : bool       ' 在途请求为写（驱动 writeSucceeded/Failed）
     - m_pendingWrite : bool          ' 总线忙时延迟补发的写请求
     - m_pendingWriteAddr : int
     - m_pendingWriteValue : quint16
@@ -56,6 +59,7 @@ class ModbusSerialClient {
     - m_unitId : int = 1
     - m_pendingReply : QModbusReply*
     - m_pendingReadRequest : bool
+    - m_pendingWriteRequest : bool       ' 在途请求为写（驱动 writeSucceeded/Failed）
     - m_pendingWrite : bool
     - m_pendingWriteAddr : int
     - m_pendingWriteValue : quint16
@@ -112,6 +116,7 @@ class DataCollector {
       * 100ms 轮询 = 心跳；3s 无响应判离线；指数退避 500ms·2^n 封顶 30s
       * 每设备 LinkState{Active,Reconnecting} + manualDisconnect
       * writeRegister 经 m_pendingWrite 在驱动内延迟补发（read 在途不丢写）
+      * writeFinished 仅在实际总线应答后发出（writeSucceeded/writeFailed），不再"发出即成功"
     end notes
 }
 
@@ -139,6 +144,7 @@ class HistoryStore {
     notes
       * 懒打开 <exe>/data/history.db；表 samples / alarms + (device_index,ts) 索引
       * 512 行 或 1s 单事务 execBatch 落盘；查询 LIMIT 20万
+      * WAL + auto_vacuum INCREMENTAL；打开时清理 30 天前旧行
       * 与写入同线程（worker），读写天然串行
     end notes
 }
@@ -158,7 +164,7 @@ class SampleQueue {
 }
 
 class AlarmEngine {
-    - m_states : QHash~int, QHash~int, Status~~   ' deviceIndex → (regAddr → status)
+    - m_states : QHash~int, QHash~int, TrackedState~~   ' deviceIndex → (regAddr → {committed,pending,consecutive})
     ..
     + checkValue(deviceIndex, ch : Channel, value) : void
     ..
@@ -167,6 +173,7 @@ class AlarmEngine {
     ..
     notes
       边沿检测 Normal/High/Low；越限触发 Critical/Warning，恢复触发 Info
+      防抖：新状态需连续 kDebounceCount=3 个采样才提交（~300ms），抖动不误报
     end notes
 }
 
@@ -548,6 +555,7 @@ WriteRegisterDialog ..> DeviceInfo : <<uses>>
 IModbusClient --> DataCollector : connectionStateChanged\n→ onConnectionChanged
 IModbusClient --> DataCollector : registersRead\n→ onRegistersRead
 IModbusClient --> DataCollector : communicationError\n→ onCommError
+IModbusClient --> DataCollector : writeSucceeded / writeFailed\n→ writeFinished(relay)
 
 DataCollector --> SampleQueue : push (producer)
 DataCollector --> HistoryStore : addSample / addAlarm
