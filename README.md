@@ -11,7 +11,7 @@
 | 通信 | 多协议：Modbus TCP + 串口 RTU，`IModbusClient` 抽象统一驱动 |
 | 采集 | 独立 worker 线程（生产者-消费者），有界 `SampleQueue`，GUI 50ms 批量排空，10Hz 轮询不卡界面 |
 | 展示 | 实时曲线（QCustomPlot，滚动时间窗）+ 圆形仪表盘（QPainter 手绘，限值弧/指针/读数） |
-| 历史 | SQLite 采样/报警双表，512 行或 1s 单事务批量落盘；异步查询回放 + CSV 导出（UTF-8 BOM） |
+| 历史 | SQLite 采样/报警双表，512 行或 1s 单事务批量落盘；异步查询回放 + **CSV（UTF-8 BOM）/ XLSX 导出** |
 | 可靠性 | 心跳 + 指数退避自动重连（3s 判离线，500ms·2ⁿ 封顶 30s）；报警防抖（3 连续采样） |
 | 控制 | 遥控写寄存器（对话框/右键/菜单三入口），总线忙延迟补发，真实写回执 |
 | 日志 | 文件日志 `data/app.log`：分级过滤 + 按大小轮转（1 MB × 3 份） |
@@ -21,6 +21,7 @@
 
 - **Qt 6.8.4 LTS**（`Core/Gui/Widgets/Network/Sql/SerialPort/SerialBus/PrintSupport/Test`）
 - **QCustomPlot**（第三方，GPL v3，独立静态库，`/W0` 编译保住首方 `/W4` 零警告）
+- **QXlsx**（第三方，MIT，`.xlsx` 导出；内部 zip 用 Qt 私有 `QZipWriter`）
 - **SQLite**（Qt SQL 驱动，WAL + auto_vacuum，30 天保留清理）
 - CMake + MSVC，`/W4` 零警告
 
@@ -34,7 +35,8 @@ DAC-SCADA/
 ├── core/                        # DataCollector / DataCache / AlarmEngine / HistoryStore / SampleQueue / AppLogger
 ├── ui/                          # MainWindow / MainViewModel / CurvePanel / DashboardPanel / GaugeWidget / HistoryPanel
 ├── simulator/                   # 内嵌模拟下位机（TCP 1502/1503 + 串口 COM6）
-├── third_party/qcustomplot/
+├── third_party/qcustomplot/       # QCustomPlot（曲线）
+├── third_party/qxlsx/             # QXlsx（XLSX 导出）
 ├── tests/                       # QTest 单元测试
 └── uml/structure.puml           # PlantUML 类图（架构参考）
 ```

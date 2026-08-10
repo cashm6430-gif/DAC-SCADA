@@ -364,7 +364,7 @@ class HistoryPanel {
     notes
       设备/通道(勾选)/时间范围(5/15/60分快捷+起止) → 异步查询；
       Tab1 采样曲线（QCustomPlot 静态回放），Tab2 报警历史；
-      导出 CSV（UTF-8 BOM）；按 requestId+设备索引丢弃过期结果
+      导出 CSV（UTF-8 BOM）/ XLSX（QXlsx）；按 requestId+设备索引丢弃过期结果
     end notes
 }
 

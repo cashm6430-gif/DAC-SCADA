@@ -26,7 +26,7 @@
 - [x] **历史查询闭环（SQLite 读回 + 曲线回放 + CSV 导出）**
   - `HistoryStore` 新增异步读 API（`querySamples`/`queryAlarms`）：SELECT 在 worker 线程执行，结果经排队信号回 GUI，大时间窗不卡界面（行数上限 20 万）
   - 新增历史查询 dock（`ui/history_panel.*`）：设备/通道/时间范围选择，「采样曲线」QCustomPlot 静态回放 +「报警历史」两页签
-  - CSV 导出 UTF-8 带 BOM（Excel 中文不乱码），采样与报警均可导出
+  - CSV 导出 UTF-8 带 BOM（Excel 中文不乱码），采样与报警均可导出；2026-08-10 另加 **XLSX 导出**（`QXlsx` 库，MIT，`third_party/qxlsx/`，导出按钮旁新增「导出XLSX」）
   - 验证：`--selftest-history` 采集约 4.5s → 异步查询电机PLC-2 → 断言 rows>0 PASS
 
 - [x] **遥控写寄存器（远程控制/参数下发）**
