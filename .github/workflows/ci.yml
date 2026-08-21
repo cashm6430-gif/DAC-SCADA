@@ -22,6 +22,8 @@ jobs:
           version: '6.8.*'
           arch: win64_msvc2022_64
           cache: true
+          # qtbase alone is the default; SerialPort/SerialBus are add-ons.
+          modules: 'qtserialport qtserialbus'
 
       # The `ci` preset injects the Qt prefix from QT_ROOT_DIR, which
       # install-qt-action exports (local presets hardcode E:/Qt/...).
