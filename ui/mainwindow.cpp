@@ -75,14 +75,14 @@ void MainWindow::connectToDevice()
 void MainWindow::setupUi()
 {
     // ======================= 菜单栏 =======================
-    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(tr("&Connect"),    this, [this]() { m_viewModel->connectToDevice(); });
-    fileMenu->addAction(tr("&Disconnect"), this, [this]() { m_viewModel->disconnectFromDevice(); });
+    QMenu *fileMenu = menuBar()->addMenu(tr("文件(&F)"));
+    fileMenu->addAction(tr("连接(&C)"),    this, [this]() { m_viewModel->connectToDevice(); });
+    fileMenu->addAction(tr("断开(&D)"), this, [this]() { m_viewModel->disconnectFromDevice(); });
     fileMenu->addSeparator();
-    fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
+    fileMenu->addAction(tr("退出(&X)"), this, &QWidget::close);
 
-    QMenu *simMenu = menuBar()->addMenu(tr("&Simulator"));
-    m_simToggle = simMenu->addAction(tr("&Start Simulated PLC"),
+    QMenu *simMenu = menuBar()->addMenu(tr("模拟器(&S)"));
+    m_simToggle = simMenu->addAction(tr("启动模拟下位机(&T)"),
                                      this, &MainWindow::toggleSimulator);
 
     QMenu *ctrlMenu = menuBar()->addMenu(tr("&控制"));
@@ -90,7 +90,7 @@ void MainWindow::setupUi()
                         this, [this]() { openWriteRegisterDialog(); });
 
     // ======================= 工具栏 =======================
-    QToolBar *toolbar = addToolBar(tr("Main"));
+    QToolBar *toolbar = addToolBar(tr("主工具栏"));
     toolbar->setMovable(false);
     toolbar->addAction(tr("▶ 启动模拟器"), this, &MainWindow::toggleSimulator);
     toolbar->addSeparator();
@@ -200,7 +200,7 @@ void MainWindow::setupUi()
     addDockWidget(Qt::RightDockWidgetArea, m_historyDock);
 
     // ======================= 菜单栏：查看（dock 可见性切换） =======================
-    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+    QMenu *viewMenu = menuBar()->addMenu(tr("查看(&V)"));
     viewMenu->addAction(m_historyDock->toggleViewAction());
     viewMenu->addSeparator();
     viewMenu->addAction(deviceDock->toggleViewAction());
@@ -237,7 +237,7 @@ void MainWindow::toggleSimulator()
         m_serialSim->stop();
         statusBar()->showMessage(tr("模拟下位机已停止"), 3000);
         if (m_simToggle)
-            m_simToggle->setText(tr("&Start Simulated PLC"));
+            m_simToggle->setText(tr("启动模拟下位机(&T)"));
     } else {
         const bool ok1 = m_simulator->start(1502, QStringLiteral("127.0.0.1"));
         const bool ok2 = m_simulator2->start(1503, QStringLiteral("127.0.0.1"));
@@ -246,13 +246,13 @@ void MainWindow::toggleSimulator()
             statusBar()->showMessage(
                 tr("模拟下位机运行中: TCP 1502/1503 + 串口 COM6"), 5000);
             if (m_simToggle)
-                m_simToggle->setText(tr("&Stop Simulated PLC"));
+                m_simToggle->setText(tr("停止模拟下位机(&T)"));
             if (!ok3)
-                QMessageBox::warning(this, tr("Simulator"),
+                QMessageBox::warning(this, tr("模拟器"),
                     tr("串口模拟器未启动（COM6 可能不存在）。\n"
                        "需要 com0com 虚拟串口对：COM5<->COM6"));
         } else {
-            QMessageBox::warning(this, tr("Simulator"),
+            QMessageBox::warning(this, tr("模拟器"),
                                  tr("启动模拟下位机失败。"));
         }
     }

@@ -4,6 +4,7 @@
 #include <QSpinBox>
 #include <QFormLayout>
 #include <QDialogButtonBox>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 WriteRegisterDialog::WriteRegisterDialog(const QList<DeviceInfo> &devices,
@@ -34,6 +35,8 @@ WriteRegisterDialog::WriteRegisterDialog(const QList<DeviceInfo> &devices,
 
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("确定"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 

@@ -174,6 +174,12 @@ HistoryPanel::HistoryPanel(MainViewModel *vm, QWidget *parent)
     m_axisY = m_plot->yAxis;
     m_axisY->setLabel(tr("数值"));
     m_axisY->setRange(0, 100);
+    // Same readability policy as the live curve: nice tick values, capped
+    // count — labels must not crowd on a narrow auto-scaled range.
+    auto *yTicker = new QCPAxisTicker;
+    yTicker->setTickStepStrategy(QCPAxisTicker::tssReadability);
+    yTicker->setTickCount(5);
+    m_axisY->setTicker(QSharedPointer<QCPAxisTicker>(yTicker));
     m_plot->legend->setVisible(true);
     m_plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
 
@@ -373,6 +379,11 @@ void HistoryPanel::plotSamples(int deviceIndex, const HistoryResult &rows)
     if (hasData && minY < maxY) {
         const double pad = qMax((maxY - minY) * 0.1, 1.0);
         m_axisY->setRange(minY - pad, maxY + pad);
+    } else if (hasData) {
+        // Flat data: center a window of sane width instead of a collapsed span.
+        const double v  = minY;
+        const double hw = qMax(qAbs(v) * 0.1, 1.0);
+        m_axisY->setRange(v - hw, v + hw);
     } else {
         m_axisY->setRange(0, 100);
     }

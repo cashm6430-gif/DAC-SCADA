@@ -3,11 +3,13 @@
 
 #include <QWidget>
 #include <QHash>
+#include <QSharedPointer>
 #include "core/types.h"
 
 class QCustomPlot;
 class QCPGraph;
 class QCPAxis;
+class QCPAxisTicker;
 
 /// Multi-channel real-time curve panel (QCustomPlot).
 ///
@@ -42,6 +44,7 @@ private:
     QCustomPlot *m_plot = nullptr;
     QCPAxis     *m_axisX = nullptr;
     QCPAxis     *m_axisY = nullptr;
+    QSharedPointer<QCPAxisTicker> m_yTicker;   // tick count adapted to axis height
     QHash<int, QCPGraph *> m_graphs;   // regAddr → graph
     int m_windowSeconds = 60;
 };

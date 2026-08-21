@@ -16,6 +16,10 @@
 CurvePanel::CurvePanel(QWidget *parent)
     : QWidget(parent)
 {
+    // A curve needs vertical room for axis labels + legend; below this the
+    // splitter would crush the plot into unreadable label soup.
+    setMinimumHeight(180);
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
@@ -34,6 +38,13 @@ CurvePanel::CurvePanel(QWidget *parent)
     m_axisY = m_plot->yAxis;
     m_axisY->setLabel(tr("数值"));
     m_axisY->setRange(0, 100);
+    // Round tick values to "nice" numbers; the tick COUNT is re-derived from
+    // the axis height on every tick (see onUiTick) so labels never crowd
+    // together when the panel is short or the auto-scaled range is narrow.
+    auto *yTicker = new QCPAxisTicker;
+    yTicker->setTickStepStrategy(QCPAxisTicker::tssReadability);
+    m_yTicker = QSharedPointer<QCPAxisTicker>(yTicker);
+    m_axisY->setTicker(m_yTicker);
 
     m_plot->legend->setVisible(true);
     m_plot->legend->setBrush(QBrush(QColor(255, 255, 255, 220)));
@@ -97,6 +108,11 @@ void CurvePanel::onUiTick()
 {
     const double now = QDateTime::currentMSecsSinceEpoch() / 1000.0;
 
+    // Keep roughly one tick label per 28 px of axis height (font is ~12 px
+    // tall; 28 px leaves clear air between labels even on a short panel).
+    const int maxTicks = qBound(2, m_axisY->axisRect()->height() / 28, 8);
+    m_yTicker->setTickCount(maxTicks);
+
     // Scroll the visible time window.
     m_axisX->setRange(now - m_windowSeconds, now);
 
@@ -122,6 +138,12 @@ void CurvePanel::onUiTick()
     if (hasData && minY < maxY) {
         const double pad = qMax((maxY - minY) * 0.1, 1.0);
         m_axisY->setRange(minY - pad, maxY + pad);
+    } else if (hasData) {
+        // All visible values identical (flat line): center a window of sane
+        // width around it so the axis doesn't collapse to a near-zero span.
+        const double v  = minY;
+        const double hw = qMax(qAbs(v) * 0.1, 1.0);   // half-window
+        m_axisY->setRange(v - hw, v + hw);
     } else {
         m_axisY->setRange(0, 100);
     }
