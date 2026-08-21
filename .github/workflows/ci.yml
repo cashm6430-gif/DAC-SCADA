@@ -25,7 +25,7 @@ jobs:
 
       # The `ci` preset injects the Qt prefix from QT_ROOT_DIR, which
       # install-qt-action exports (local presets hardcode E:/Qt/...).
-      - name: Configure (preset: ci)
+      - name: Configure (ci preset)
         run: cmake --preset ci
 
       - name: Build Release
@@ -37,16 +37,16 @@ jobs:
       # Headless end-to-end self-tests — each exits non-zero unless its real
       # assertions hold. None requires com0com: --selftest expects the serial
       # pump OFFLINE (no COM pair on the runner ⇒ still offline ⇒ PASS).
-      - name: Self-test: end-to-end acquisition + serial offline
+      - name: "Self-test: end-to-end acquisition + serial offline"
         run: ./build_ci/Release/DAC-SCADA.exe --selftest
 
-      - name: Self-test: auto-reconnect (stop/restart TCP 1503)
+      - name: "Self-test: auto-reconnect (stop/restart TCP 1503)"
         run: ./build_ci/Release/DAC-SCADA.exe --selftest-reconnect
 
-      - name: Self-test: history read-back
+      - name: "Self-test: history read-back"
         run: ./build_ci/Release/DAC-SCADA.exe --selftest-history
 
-      - name: Self-test: remote write
+      - name: "Self-test: remote write"
         run: ./build_ci/Release/DAC-SCADA.exe --selftest-write
 
       - name: Upload diagnostics on failure
