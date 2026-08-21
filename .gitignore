@@ -2,6 +2,7 @@
 build/
 build_debug/
 build_release/
+build_ci/
 out/
 [Dd]ebug/
 [Rr]elease/

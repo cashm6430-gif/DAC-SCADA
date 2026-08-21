@@ -18,6 +18,15 @@
       "cacheVariables": {
         "CMAKE_PREFIX_PATH": "E:/Qt/release/bin"
       }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI (Qt prefix from QT_ROOT_DIR)",
+      "description": "For GitHub Actions: install-qt-action exports QT_ROOT_DIR",
+      "binaryDir": "${sourceDir}/build_ci",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{QT_ROOT_DIR}"
+      }
     }
   ],
   "buildPresets": [
@@ -29,6 +38,11 @@
     {
       "name": "release",
       "configurePreset": "release",
+      "configuration": "Release"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
       "configuration": "Release"
     }
   ]

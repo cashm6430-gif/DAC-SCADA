@@ -1,5 +1,7 @@
 # DAC-SCADA
 
+[![CI](https://github.com/cashm6430-gif/DAC-SCADA/actions/workflows/ci.yml/badge.svg)](https://github.com/cashm6430-gif/DAC-SCADA/actions/workflows/ci.yml)
+
 > 通用设备数据采集与监控系统（Qt 6.8 + C++17）——覆盖上位机面试核心考点：**通信、多线程、数据库、实时曲线**。
 
 一个轻量级 SCADA 原型：通过 Modbus 采集下位机（TCP / 串口 RTU）寄存器，实时曲线 + 圆形仪表盘展示，SQLite 历史存储与查询，断线自动重连，报警引擎，遥控写寄存器。自带内嵌模拟下位机，无需真实硬件即可演示与自检。
@@ -53,6 +55,7 @@ ctest --test-dir build_release -C Release        # 6/6 PASS
 
 - Qt 位于 `E:/Qt/{debug,release}/bin`（CMake 自动探测，或用预设覆盖）。
 - post-build：`windeployqt` 部署 Qt DLL + 拷贝 `config/`。
+- **CI**：GitHub Actions（`.github/workflows/ci.yml`）在 windows-latest 上用 `ci` 预设（Qt 前缀取自 `QT_ROOT_DIR`）构建，跑 ctest 单测 + 4 组端到端自检；失败时上传 `*_result.txt` 与 `app.log` 诊断。
 
 ## 运行模式
 

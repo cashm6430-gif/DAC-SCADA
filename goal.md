@@ -54,6 +54,12 @@
   - 表盘量程由通道报警上下限推导（各加 50% 裕量，指针可进入危险区）；无数据时指针居中、读数 `--`
   - 纯几何抽为静态函数（`computeDialRange`/`angleFor`）→ `test_gauge` 单测（量程裕量、135°..405° 角度映射、越界钳位、退化限值）
 
+- [x] **GitHub Actions CI**
+  - `.github/workflows/ci.yml`：windows-latest + Qt 6.8（install-qt-action），push/PR 触发
+  - 新增 `ci` CMake 预设（Qt 前缀取自 `$env{QT_ROOT_DIR}`，与本地硬编码预设并存）
+  - 流水线：构建 Release → ctest 单测 → 四组端到端自检（CI 无 com0com，串口泵站保持离线，`--selftest` 断言仍成立）→ 失败上传 `*_result.txt`/`app.log` 诊断
+  - README 挂 CI badge
+
 ## 验证命令
 - `cmake --preset release && cmake --build build_release --config Release`（/W4 零警告）
 - `ctest --test-dir build_release -C Release`（6 个单元测试，毫秒级）
@@ -62,3 +68,4 @@
 - `build_release/Release/DAC-SCADA.exe --selftest-history` → `history_result.txt`
 - `build_release/Release/DAC-SCADA.exe --selftest-write` → `write_result.txt`
 - 日志：`build_release/Release/DAC-SCADA.exe --sim --log-level=debug` → `data/app.log`（分级+轮转）
+- CI：push/PR 自动跑（GitHub Actions）；本地等价序列 = `cmake --preset ci && cmake --build --preset ci && ctest --test-dir build_ci -C Release` + 四组自检
