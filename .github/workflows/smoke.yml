@@ -1,0 +1,11 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  echo:
+    runs-on: windows-latest
+    steps:
+      - run: echo hello
