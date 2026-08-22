@@ -84,3 +84,5 @@ build_release/Release/DAC-SCADA.exe --sim --log-level=debug   # 演示 + 日志�
 
 - 功能目标与验证命令：[`goal.md`](goal.md)
 - 架构类图：[`uml/structure.puml`](uml/structure.puml)（PlantUML）
+## 运行截图
+  <img width="1917" height="1035" alt="Snipaste_2026-08-22_07-50-54" src="https://github.com/user-attachments/assets/9d251595-b1b7-4985-95a0-19d77805e318" />
